@@ -670,3 +670,7 @@ button.cell { width: 100%; text-align: left; }
 .nav-title.brand > span.row{display:inline-flex;align-items:center;gap:4px}
 .hero .sub-row .up{color:var(--green,#00d35a)}
 .hero .sub-row .down{color:#ff453a}
+
+.chat-btn{color:#fff;margin-right:4px}
+.chat-btn svg{stroke:currentColor;fill:none}
+.nav .chat-btn:active{background:rgba(255,255,255,.08)}

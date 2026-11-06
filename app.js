@@ -37,6 +37,7 @@
   const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
   const { fmtPrice, toMs } = window.Charts;
   const TG_BOT = 'https://t.me/mahdi06_desk_bot';
+  const GROK_CHAT = 'grokbot://app/v1/agent?id=b5ba2ec1-6b75-41eb-935a-e3d50ced2493';
   const tgPause = () => TG_BOT + '?start=pause';
   const tgResume = () => TG_BOT + '?start=resume';
   const tgHelp = () => TG_BOT + '?start=help';
@@ -86,6 +87,7 @@
   /* ================= icons ================= */
   const I = {
     search: '<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.6-4.6"/></svg>',
+    chat: '<svg viewBox="0 0 24 24"><path d="M5.5 18.2 4 21l3.2-1.2A8.5 8.5 0 1 0 5.5 18.2z"/><circle cx="9" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>',
     bell: '<svg viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg>',
     back: '<svg viewBox="0 0 24 24"><path d="M15 4.5 7.5 12 15 19.5"/></svg>',
     share: '<svg viewBox="0 0 24 24"><path d="M12 3.5v11M8 7.2l4-3.9 4 3.9"/><path d="M8.5 10.5H6.8A1.3 1.3 0 0 0 5.5 11.8v7.4a1.3 1.3 0 0 0 1.3 1.3h10.4a1.3 1.3 0 0 0 1.3-1.3v-7.4a1.3 1.3 0 0 0-1.3-1.3h-1.7"/></svg>',
@@ -592,6 +594,7 @@
           <span class="nav-sub" data-modesub>…</span>
         </a>
         <div class="grow"></div>
+        <a class="iconbtn chat-btn" href="${GROK_CHAT}" aria-label="Chat mit Grok Bot" title="Chat mit Grok Bot">${I.chat}</a>
         <a class="run-pill" data-run href="${tgResume()}" target="_blank" rel="noopener" aria-label="Run or pause agents">Run</a>
       </header>
       <div class="offline"></div>
@@ -1377,6 +1380,11 @@ $$('.bigcard', list).forEach((card) => {
           <span class="avatar" style="width:52px;height:52px"><img src="icons/favicon.svg" alt=""></span>
           <div class="cl"><b style="font-size:20px">${esc(a.handle ? '@' + String(a.handle).replace(/^@/, '') : 'Grok Desk')}</b><small>${(a.mode || 'PAPER').toUpperCase()} · Stack ${usd(a.stack)}</small></div>${modePill()}</div></div>
         <div class="group-f">FOMO wallet balance is not readable here — this is the desk stack only.</div>
+
+        <div class="group-h">Grok Bot</div>
+        <div class="group">
+          <a class="cell link" href="${GROK_CHAT}"><span class="glyph" style="background:rgba(0,211,90,0.16);color:var(--green)">${I.chat}</span><div class="cl">Chat mit Grok Bot<small>In der Grok Bot App öffnen</small></div><span class="chev">›</span></a>
+        </div>
 
         <div class="group-h">Morning post</div>
         <div data-post></div>
