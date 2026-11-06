@@ -43,6 +43,20 @@
     return rows[0] || null;
   }
 
+  async function restRows(table, params) {
+    const url = new URL(cfg.supabaseUrl + '/rest/v1/' + table);
+    Object.keys(params || {}).forEach((k) => url.searchParams.set(k, params[k]));
+    const r = await fetch(url, {
+      headers: {
+        apikey: cfg.supabaseAnonKey,
+        Authorization: 'Bearer ' + cfg.supabaseAnonKey,
+      },
+      cache: 'no-store',
+    });
+    if (!r.ok) throw Object.assign(new Error('rest ' + r.status), { status: r.status });
+    return r.json();
+  }
+
   async function pagesGet(apiPath) {
     const base = 'd/' + encodeURIComponent(dataPath()).replace(/%2F/g, '/');
     const u = new URL(apiPath, location.origin);
@@ -107,6 +121,14 @@
         }
         if (p === 'search') return { rows: [] };
         if (p === 'copy') return { state: 'no_traders', traders: [], hot: [], trades: [] };
+        if (p === 'signals') {
+          const rows = await restRows('desk_signals', {
+            select: '*',
+            order: 'ts.desc',
+            limit: '80',
+          });
+          return { rows: rows || [] };
+        }
         return null;
       } catch (e) {
         if (dataPath()) return pagesGet(apiPath); // fallback
@@ -127,5 +149,15 @@
     return () => { try { client.removeChannel(ch); } catch (e) {} };
   }
 
-  w.DeskData = { init, get, subscribe, mode: () => mode, dataPath };
+  function subscribeSignals(onRow) {
+    if (mode !== 'supabase' || !client) return () => {};
+    const ch = client.channel('desk-signals')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'desk_signals' }, (payload) => {
+        if (payload.new) onRow(payload.new, payload.eventType || 'INSERT');
+      })
+      .subscribe();
+    return () => { try { client.removeChannel(ch); } catch (e) {} };
+  }
+
+  w.DeskData = { init, get, subscribe, subscribeSignals, mode: () => mode, dataPath };
 })(window);

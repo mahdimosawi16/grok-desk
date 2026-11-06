@@ -203,6 +203,7 @@
     state: null, chart: {}, range: 'LIVE', activity: null, account: null, settings: null,
     coin: {}, audit: {}, decisions: {}, unreadSeen: false, layerLive: {},
     copy: null, replay: {}, replayH: 24, nightPost: null, nightPreview: null,
+    signals: null, signalsSeenId: 0, signalsNew: 0,
   };
   let stateTimer = null;
   function refreshStateSoon() {
@@ -281,7 +282,7 @@
   }
 
   /* ================= router ================= */
-  const TABS = ['home', 'agents', 'copy', 'activity', 'account'];
+  const TABS = ['home', 'agents', 'signals', 'copy', 'activity', 'account'];
   let current = null;
   const stack = [];
   function parse(hash) {
@@ -486,6 +487,71 @@
       <div class="rc-line">${replayHeadline(s)}</div>${bar}</a>`;
   }
 
+
+  /* ================= signals helpers ================= */
+  function berlinTime(ts) {
+    const t = toMs(ts); if (!t) return '';
+    return new Date(t).toLocaleString('de-DE', {
+      timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit',
+    });
+  }
+  function kindLabel(k, isTest) {
+    if (isTest) return 'TEST';
+    const m = { signal: 'Kauf-Signal', warn: 'Warnung', reject: 'Abgelehnt', health: 'System', night: 'Nacht', exit: 'Exit', info: 'Info', test: 'TEST' };
+    return m[k] || (k || 'Info');
+  }
+  function signalTitle(r) {
+    if (r.name) return r.name + (r.symbol ? ' · $' + String(r.symbol).replace(/^\$/, '') : '');
+    const body = String(r.body || r.text || '');
+    const line = body.split('\n').find(Boolean) || '';
+    return line.replace(/^PAPER\s*·\s*/, '').slice(0, 60) || 'Signal';
+  }
+  function sigCard(r, fresh) {
+    const kind = r.is_test ? 'test' : (r.kind || 'info');
+    const title = signalTitle(r);
+    const reasons = r.reasons || '';
+    const score = num(r.score);
+    const size = num(r.size_usd);
+    const url = r.url;
+    const when = berlinTime(r.ts);
+    const pills = [
+      `<span class="kind-pill">${esc(kindLabel(r.kind, r.is_test))}</span>`,
+      score != null ? `<span class="pill yellow mono">Score ${Math.round(score)}</span>` : '',
+      size != null ? `<span class="pill green mono">${usd(size)}</span>` : '',
+      when ? `<span class="pill grey">${esc(when)}</span>` : '',
+    ].filter(Boolean).join('');
+    const avatar = coinAvatar({ mint: r.mint || title, name: r.name || title, symbol: r.symbol, chain: 'solana', image: r.image });
+    const fomo = url ? `<a class="cta" href="${esc(url)}" target="_blank" rel="noopener">Auf FOMO öffnen</a>` : '';
+    const href = r.mint ? `href="#/coin/${encodeURIComponent(r.mint)}"` : '';
+    return `<article class="sig-card kind-${esc(kind)}${fresh ? ' fresh' : ''}" data-id="${esc(r.id)}">
+      <div class="sig-top">${avatar}<div class="rt"><b ${href}>${esc(title)}</b><span>${esc(reasons)}</span></div></div>
+      <div class="sig-meta">${pills}</div>${fomo}</article>`;
+  }
+  function paintTabSignalsBadge() {
+    const a = document.querySelector('#tabbar a[data-tab=signals]');
+    if (!a) return;
+    const badge = a.querySelector('.sig-badge');
+    const on = (S.signalsNew || 0) > 0;
+    a.classList.toggle('has-new', on);
+    if (badge) {
+      if (on) badge.removeAttribute('hidden'); else badge.setAttribute('hidden', '');
+    }
+  }
+  function mergeSignalRow(row) {
+    if (!row || row.id == null) return;
+    if (!S.signals) S.signals = { rows: [] };
+    const rows = S.signals.rows;
+    const i = rows.findIndex((x) => String(x.id) === String(row.id));
+    if (i >= 0) rows[i] = row; else rows.unshift(row);
+    rows.sort((a, b) => (num(b.ts) || 0) - (num(a.ts) || 0));
+    S.signals.rows = rows.slice(0, 80);
+    const idn = +row.id;
+    if (idn > (S.signalsSeenId || 0) && !(current && current.name === 'signals')) {
+      S.signalsNew = (S.signalsNew || 0) + 1;
+      paintTabSignalsBadge();
+    }
+  }
+
   /* ================= HOME ================= */
   PAGES.home = function () {
     const page = { el: el(`<section>
@@ -505,6 +571,11 @@
       <div class="chart-wrap"><canvas></canvas><div class="chart-empty" hidden></div></div>
       <div class="ranges">${['LIVE', '1H', '4H', '1D', '1W', 'ALL'].map((r) => `<button data-r="${r}">${r === 'LIVE' ? '<i class="ldot"></i>' : ''}${r}</button>`).join('')}</div>
       <div class="chart-sep"></div>
+      <a class="sig-home" href="#/signals" data-sighome>
+        <span class="glyph" style="background:rgba(0,211,90,0.16);color:var(--green)">${I.bell}</span>
+        <div class="cl"><b>Signale</b><small data-sigpreview>Live-Kaufsignale mit FOMO-Button</small></div>
+        <span class="chev">›</span>
+      </a>
       <div data-replay></div>
       <div class="section-h"><h2 data-agh>Agenten</h2></div>
       <div class="carousel"></div>
@@ -532,7 +603,7 @@
     }, { passive: true });
     $('[data-search]', root).onclick = openSearch;
     $('[data-share]', root).onclick = () => window.Share && window.Share.open('night');
-    $('[data-bell]', root).onclick = () => { S.unreadSeen = true; if (S.state) S.state.unread = 0; api('/api/read', { method: 'POST' }).catch(() => {}); go('#/activity'); };
+    $('[data-bell]', root).onclick = () => { S.signalsNew = 0; paintTabSignalsBadge(); go('#/signals'); };
 
     function paintHero(animate = true) {
       const s = S.state; if (!s) return;
@@ -549,7 +620,14 @@
       const tp = num(s.todayPct);
       $('[data-sub]', root).innerHTML = `${tp != null ? `<span class="${tp >= 0 ? 'up' : 'down'}">${tp >= 0 ? '▲' : '▼'} ${pct(tp)} today</span>` : '<span class="muted">n/a today</span>'}
         ${num(s.multiplier) != null ? `<span class="pill green">${(+s.multiplier).toFixed(2)}×</span>` : ''}${modePill()}`;
-      $('[data-bell] .dot', root).hidden = !(s.unread > 0 && !S.unreadSeen);
+      $('[data-bell] .dot', root).hidden = !((S.signalsNew > 0) || (s.unread > 0 && !S.unreadSeen));
+      const prev = $('[data-sigpreview]', root);
+      if (prev) {
+        const top = S.signals && S.signals.rows && S.signals.rows[0];
+        if (top) prev.textContent = (S.signalsNew ? (S.signalsNew + ' neu · ') : '') + signalTitle(top);
+        else prev.textContent = 'Live-Kaufsignale mit FOMO-Button';
+      }
+      paintTabSignalsBadge();
       const agents = s.agents || [];
       const running = agents.filter((a) => a.status === 'running').length;
       $('[data-agh]', root).innerHTML = `Agenten <span class="muted">· ${running} running</span>`;
@@ -593,8 +671,12 @@
     page.load = async function load() {
       paintHero(false); paintChart(); paintAct(); paintReplay(); loadReplay();
       try {
-        const [st, ch, ac] = await Promise.all([api('/api/state'), api('/api/chart?range=' + S.range), api('/api/activity')]);
-        S.state = st; S.chart[S.range] = ch; S.activity = ac;
+        const [st, ch, ac, sg] = await Promise.all([
+          api('/api/state'), api('/api/chart?range=' + S.range), api('/api/activity'),
+          api('/api/signals').catch(() => S.signals || { rows: [] }),
+        ]);
+        S.state = st; S.chart[S.range] = ch; S.activity = ac; S.signals = sg;
+        if (sg && sg.rows && sg.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +sg.rows[0].id || 0);
         net.ok(); paintHero(); paintChart(); paintAct();
       } catch (e) { net.fail(load, e); }
     };
@@ -900,6 +982,44 @@
     }
     $$('.rp-chips button', root).forEach((b) => b.addEventListener('click', () => { S.replayH = +b.dataset.h; shareArg.h = S.replayH; paint(); load(S.replayH); }));
     page.load = () => load(S.replayH);
+    return page;
+  };
+
+
+  /* ================= SIGNALS ================= */
+  PAGES.signals = function () {
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Signale</div><div class="grow"></div>
+      <button class="iconbtn" data-bell aria-label="Signale">${I.bell}<span class="dot" hidden></span></button></header>
+      <h1 class="large-title">Signale</h1>
+      <div class="section-sub">PAPER · Kaufsignale und Alerts live vom Desk</div>
+      <div class="offline"></div>
+      <div data-list></div></section>`), name: 'signals' };
+    const root = page.el;
+    S.signalsNew = 0; paintTabSignalsBadge();
+    if (S.signals && S.signals.rows && S.signals.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +S.signals.rows[0].id || 0);
+    function paint(freshId) {
+      const rows = (S.signals && S.signals.rows) || [];
+      const box = $('[data-list]', root);
+      if (!S.signals) { box.innerHTML = actSkel(6); return; }
+      if (!rows.length) {
+        box.innerHTML = '<div class="empty"><div class="dash"></div><b>Noch keine Signale</b>Sobald der Desk ein Kaufsignal oder einen Alert sendet, erscheint er hier live — mit FOMO-Button.</div>';
+        return;
+      }
+      box.innerHTML = rows.map((r) => sigCard(r, freshId != null && String(r.id) === String(freshId))).join('');
+    }
+    page.load = async function load() {
+      paint();
+      try {
+        S.signals = await api('/api/signals');
+        if (S.signals.rows && S.signals.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +S.signals.rows[0].id || 0);
+        S.signalsNew = 0; paintTabSignalsBadge();
+        net.ok(); paint();
+      } catch (e) { net.fail(load, e); }
+    };
+    page.onEvent = (type, d) => {
+      if (type === 'desk_signal' && d) { mergeSignalRow(d); paint(d.id); }
+    };
+    page.onState = () => paintTabSignalsBadge();
     return page;
   };
 
@@ -1867,6 +1987,39 @@
   route();
   if (window.Share) window.Share.init({ api, S, DEMO, toast, coins: DEMO ? (s) => Demo.bySym[s] : null });
   if (!DEMO_STATE) startStream();
+  (function liveSupabase() {
+    if (DEMO || !window.DeskData) return;
+    try { if (DeskData.mode() === 'none') DeskData.init(); } catch (e) {}
+    if (DeskData.mode() !== 'supabase') return;
+    DeskData.subscribe((st) => {
+      if (!st) return;
+      S.state = st; net.ok();
+      if (current && current.onState) current.onState();
+    });
+    DeskData.subscribeSignals((row) => {
+      if (!row) return;
+      mergeSignalRow(row);
+      if (current && current.onEvent) current.onEvent('desk_signal', row);
+      else paintTabSignalsBadge();
+      if (current && current.onState) current.onState();
+    });
+    setInterval(async () => {
+      try {
+        const sg = await api('/api/signals');
+        const prevTop = S.signals && S.signals.rows && S.signals.rows[0] && S.signals.rows[0].id;
+        S.signals = sg;
+        const top = sg && sg.rows && sg.rows[0];
+        if (top && String(top.id) !== String(prevTop)) {
+          if (!(current && current.name === 'signals')) {
+            S.signalsNew = (S.signalsNew || 0) + 1;
+            paintTabSignalsBadge();
+          }
+          if (current && current.onEvent) current.onEvent('desk_signal', top);
+          if (current && current.onState) current.onState();
+        }
+      } catch (e) {}
+    }, 8000);
+  })();
   if (DEMO) {
     window.__desk = { S, go };
     // screenshot helpers (design only): &scroll=px scrolls the page, &card=n scrolls the agent carousel

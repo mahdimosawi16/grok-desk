@@ -439,7 +439,10 @@ button.cell { width: 100%; text-align: left; }
 #tabbar.hidden { transform: translateY(110%); }
 #tabbar a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: rgba(235,235,245,0.45); font-size: 10px; font-weight: 500; letter-spacing: 0.1px; min-height: 44px; }
 #tabbar a svg { width: 26px; height: 26px; fill: currentColor; stroke: currentColor; stroke-width: 0; }
-#tabbar a[data-tab=agents] svg path, #tabbar a[data-tab=activity] svg path { stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+#tabbar a[data-tab=agents] svg path, #tabbar a[data-tab=activity] svg path, #tabbar a[data-tab=signals] svg path { stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+#tabbar a[data-tab=signals] svg .sig-badge { stroke-width: 0; fill: var(--green); }
+#tabbar a[data-tab=signals].has-new svg .sig-badge { display: block; animation: sigPulse 1.4s ease-in-out infinite; }
+@keyframes sigPulse { 0%,100%{ transform: scale(1); opacity: 1;} 50%{ transform: scale(1.15); opacity: .75;} }
 #tabbar a[data-tab=account] svg path { fill: none; stroke-width: 2.1; stroke-linecap: round; }
 #tabbar a[data-tab=copy] svg path, #tabbar a[data-tab=copy] svg rect { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #tabbar a.on { color: var(--lime); }
@@ -590,3 +593,47 @@ button.cell { width: 100%; text-align: left; }
   .page, .sheet, .row.new, .feed .fr { animation: none !important; }
   .strip.reading::after, .sdot.live, .ranges .ldot { animation: none !important; }
 }
+
+/* ---------- signals feed ---------- */
+.sig-card {
+  margin: 0 calc(var(--g) + var(--sal)) 12px; padding: 14px 14px 12px;
+  background: var(--card); border-radius: 16px;
+  border: 0.5px solid transparent;
+  transition: border-color 300ms, box-shadow 300ms, transform 300ms;
+}
+.sig-card.fresh {
+  border-color: rgba(0,211,90,0.45);
+  box-shadow: 0 0 0 1px rgba(0,211,90,0.18), 0 8px 24px rgba(0,211,90,0.08);
+  animation: sigIn 480ms var(--ease) both;
+}
+@keyframes sigIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.sig-top { display: flex; align-items: flex-start; gap: 12px; }
+.sig-top .rt { flex: 1; min-width: 0; }
+.sig-top .rt b { display: block; font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
+.sig-top .rt span { display: block; margin-top: 3px; color: var(--text2); font-size: 13px; }
+.sig-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sig-body { margin-top: 10px; color: var(--text2); font-size: 14px; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }
+.sig-card .cta {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 12px; height: 44px; border-radius: 12px;
+  background: var(--green); color: #000; font-weight: 700; font-size: 15px;
+}
+.sig-card .cta:active { opacity: .85; transform: scale(0.98); }
+.sig-card.kind-health, .sig-card.kind-night, .sig-card.kind-info, .sig-card.kind-warn, .sig-card.kind-reject {
+  /* non-buy alerts */
+}
+.sig-card .kind-pill { height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; background: rgba(235,235,245,0.12); color: var(--text2); }
+.sig-card.kind-signal .kind-pill { background: rgba(0,211,90,0.18); color: var(--green); }
+.sig-card.kind-warn .kind-pill, .sig-card.kind-health .kind-pill { background: rgba(255,159,10,0.16); color: var(--orange); }
+.sig-card.kind-reject .kind-pill { background: rgba(255,69,58,0.16); color: var(--red); }
+.sig-card.kind-test .kind-pill { background: rgba(100,210,255,0.16); color: var(--cyan); }
+.sig-home {
+  margin: 0 calc(var(--g) + var(--sal)) 8px; padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(0,211,90,0.14), rgba(0,211,90,0.04));
+  border: 0.5px solid rgba(0,211,90,0.28); border-radius: 14px;
+  display: flex; align-items: center; gap: 12px;
+}
+.sig-home .cl { flex: 1; min-width: 0; }
+.sig-home .cl b { display: block; font-size: 15px; font-weight: 600; }
+.sig-home .cl small { display: block; margin-top: 2px; color: var(--text2); font-size: 13px; }
+.sig-home .chev { color: var(--text3); font-size: 22px; }
