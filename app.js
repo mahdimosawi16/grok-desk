@@ -97,8 +97,9 @@
     analyst: { label: 'Analyst', color: 'yellow', hex: '#ffd60a', glyph: '<svg viewBox="0 0 20 20"><path d="M3 14.5a7 7 0 1 1 14 0"/><path d="m10 14.5 3.6-4.4"/><circle cx="10" cy="14.5" r="1.2"/></svg>' },
     executor: { label: 'Executor', color: 'green', hex: '#00d35a', glyph: '<svg viewBox="0 0 20 20"><path d="M11.2 2.5 4.5 11h4.8l-1 6.5 6.8-8.6h-4.9z"/></svg>' },
     risk: { label: 'Risk', color: 'pink', hex: '#ff6b9a', glyph: '<svg viewBox="0 0 20 20"><path d="M10 2.5 16 5v4.6c0 3.8-2.6 6.4-6 7.9-3.4-1.5-6-4.1-6-7.9V5z"/><path d="M7.4 10.6h5.2"/></svg>' },
+    traderwatch: { label: 'Trader-Watch', color: 'purple', hex: '#bf5af2', glyph: '<svg viewBox="0 0 20 20"><path d="M10 3.2 12.2 7.6l4.8.7-3.5 3.4.8 4.8L10 14.2l-4.3 2.3.8-4.8-3.5-3.4 4.8-.7z"/><circle cx="10" cy="10" r="2.2"/></svg>' },
   };
-  const ORDER = ['scanner', 'auditor', 'analyst', 'executor', 'risk'];
+  const ORDER = ['scanner', 'auditor', 'analyst', 'executor', 'risk', 'traderwatch'];
   const glyph = (n) => `<span class="glyph" style="background:${AG[n].hex}22;color:${AG[n].hex}">${AG[n].glyph}</span>`;
 
   const CHAIN_BADGE = {
@@ -469,6 +470,22 @@
           <div class="afoot" style="margin-top:0;align-items:baseline"><span>Last exit</span><b style="font-size:17px;color:#fff">${c.last ? esc(c.last) : '<span class="muted" style="font-weight:500">No exits yet</span>'}</b></div>
         </div>`;
     },
+    traderwatch(body, c, a, st) {
+      const feed = (c.feed || []).slice(0, 5);
+      const rows = feed.map((f) => {
+        const k = (f.sig || '') + (f.side || '');
+        const fresh = st.inited && !st.seen.has(k); st.seen.add(k);
+        const side = String(f.side || '').toUpperCase();
+        const cls = side === 'BUY' ? 'pass' : 'kill';
+        return `<div class="fr ${cls}" style="${fresh ? '' : 'animation:none'}"><span class="fn">@${esc(f.handle || '?')}</span><span class="fs">${esc(side)}</span><span class="fv">${esc(f.name || f.symbol || (f.mint || '').slice(0, 6) || '')}</span></div>`;
+      }).join('');
+      const watching = (c.watching || []).map((h) => '@' + String(h).replace(/^@/, '')).join(' · ');
+      body.innerHTML = `<div class="abig" style="color:${AG.traderwatch.hex}">${intf(c.alerts24h)}<small>alerts 24h</small></div>
+        <div class="muted" style="font-size:15px;margin-top:2px">${esc(watching || a.subtitle || 'Alert only')}</div>
+        <div class="abody">${feed.length ? `<div class="feed">${rows}</div>` : '<div class="empty" style="padding:22px 0 8px"><div class="dash"></div>Warte auf Trades</div>'}
+        <div class="afoot"><span>Nur Alerts</span><span>Du kaufst selbst</span></div></div>`;
+      st.inited = true;
+    },
   };
 
   /* ================= replay pieces (home card, agents link, replay page) ================= */
@@ -497,12 +514,17 @@
   }
   function kindLabel(k, isTest) {
     if (isTest) return 'TEST';
-    const m = { signal: 'Kauf-Signal', warn: 'Warnung', reject: 'Abgelehnt', health: 'System', night: 'Nacht', exit: 'Exit', info: 'Info', test: 'TEST' };
+    const m = { signal: 'Kauf-Signal', warn: 'Warnung', reject: 'Abgelehnt', health: 'System', night: 'Nacht', exit: 'Exit', info: 'Info', test: 'TEST', trader_buy: 'Trader BUY', trader_sell: 'Trader SELL' };
     return m[k] || (k || 'Info');
   }
   function signalTitle(r) {
-    if (r.name) return r.name + (r.symbol ? ' · $' + String(r.symbol).replace(/^\$/, '') : '');
     const body = String(r.body || r.text || '');
+    const trader = body.match(/Trader-Watch\s*·\s*(@[\w.]+)\s+(BUY|SELL)\s+(.+)/i);
+    if (trader) {
+      const coin = (r.name || trader[3] || '').split('\n')[0].trim();
+      return trader[1] + ' ' + trader[2].toUpperCase() + (coin ? ' · ' + coin.slice(0, 40) : '');
+    }
+    if (r.name) return r.name + (r.symbol ? ' · $' + String(r.symbol).replace(/^\$/, '') : '');
     const line = body.split('\n').find(Boolean) || '';
     return line.replace(/^PAPER\s*·\s*/, '').slice(0, 60) || 'Signal';
   }
@@ -514,14 +536,18 @@
     const size = num(r.size_usd);
     const url = r.url;
     const when = berlinTime(r.ts);
+    const isBuy = kind === 'trader_buy';
+    const isSell = kind === 'trader_sell';
     const pills = [
       `<span class="kind-pill">${esc(kindLabel(r.kind, r.is_test))}</span>`,
       score != null ? `<span class="pill yellow mono">Score ${Math.round(score)}</span>` : '',
       size != null ? `<span class="pill green mono">${usd(size)}</span>` : '',
       when ? `<span class="pill grey">${esc(when)}</span>` : '',
+      (isBuy || isSell) ? `<span class="pill grey">Alert only</span>` : '',
     ].filter(Boolean).join('');
     const avatar = coinAvatar({ mint: r.mint || title, name: r.name || title, symbol: r.symbol, chain: 'solana', image: r.image });
-    const fomo = url ? `<a class="cta" href="${esc(url)}" target="_blank" rel="noopener">Auf FOMO öffnen</a>` : '';
+    const ctaLabel = isSell ? 'Auf FOMO öffnen' : 'Auf FOMO öffnen';
+    const fomo = url ? `<a class="cta${isSell ? ' cta-sell' : ''}" href="${esc(url)}" target="_blank" rel="noopener">${ctaLabel}</a>` : '';
     const href = r.mint ? `href="#/coin/${encodeURIComponent(r.mint)}"` : '';
     return `<article class="sig-card kind-${esc(kind)}${fresh ? ' fresh' : ''}" data-id="${esc(r.id)}">
       <div class="sig-top">${avatar}<div class="rt"><b ${href}>${esc(title)}</b><span>${esc(reasons)}</span></div></div>
@@ -576,6 +602,11 @@
         <div class="cl"><b>Signale</b><small data-sigpreview>Live-Kaufsignale mit FOMO-Button</small></div>
         <span class="chev">›</span>
       </a>
+      <a class="sig-home tw-home" href="#/signals" data-twhome>
+        <span class="glyph" style="background:rgba(191,90,242,0.16);color:#bf5af2">${AG.traderwatch.glyph}</span>
+        <div class="cl"><b>Trader-Watch</b><small data-twpreview>@panceramic · @starcatcher444 · nur Alerts</small></div>
+        <span class="chev">›</span>
+      </a>
       <div data-replay></div>
       <div class="section-h"><h2 data-agh>Agenten</h2></div>
       <div class="carousel"></div>
@@ -626,6 +657,13 @@
         const top = S.signals && S.signals.rows && S.signals.rows[0];
         if (top) prev.textContent = (S.signalsNew ? (S.signalsNew + ' neu · ') : '') + signalTitle(top);
         else prev.textContent = 'Live-Kaufsignale mit FOMO-Button';
+      }
+      const twp = $('[data-twpreview]', root);
+      if (twp) {
+        const tw = (S.state.agents || []).find((a) => a.name === 'traderwatch');
+        const last = tw && tw.card && tw.card.last;
+        if (last) twp.textContent = '@' + String(last.handle || '').replace(/^@/, '') + ' ' + String(last.side || '') + (last.name ? ' · ' + last.name : '') + ' · Alert only';
+        else twp.textContent = '@panceramic · @starcatcher444 · nur Alerts';
       }
       paintTabSignalsBadge();
       const agents = s.agents || [];

@@ -637,3 +637,22 @@ button.cell { width: 100%; text-align: left; }
 .sig-home .cl b { display: block; font-size: 15px; font-weight: 600; }
 .sig-home .cl small { display: block; margin-top: 2px; color: var(--text2); font-size: 13px; }
 .sig-home .chev { color: var(--text3); font-size: 22px; }
+
+/* ---------- trader-watch ---------- */
+.sig-home.tw-home {
+  background: linear-gradient(135deg, rgba(191,90,242,0.16), rgba(191,90,242,0.04));
+  border-color: rgba(191,90,242,0.32);
+  margin-top: 8px;
+}
+.sig-card.kind-trader_buy {
+  border-color: rgba(0,211,90,0.35);
+  background: linear-gradient(180deg, rgba(0,211,90,0.08), var(--card) 48%);
+}
+.sig-card.kind-trader_sell {
+  border-color: rgba(255,69,58,0.35);
+  background: linear-gradient(180deg, rgba(255,69,58,0.10), var(--card) 48%);
+}
+.sig-card.kind-trader_buy .kind-pill { background: rgba(0,211,90,0.18); color: var(--green); }
+.sig-card.kind-trader_sell .kind-pill { background: rgba(255,69,58,0.18); color: var(--red); }
+.sig-card .cta.cta-sell { background: var(--red); color: #fff; }
+.pill.purple { background: rgba(191,90,242,0.16); color: #bf5af2; }
