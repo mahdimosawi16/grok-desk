@@ -656,3 +656,17 @@ button.cell { width: 100%; text-align: left; }
 .sig-card.kind-trader_sell .kind-pill { background: rgba(255,69,58,0.18); color: var(--red); }
 .sig-card .cta.cta-sell { background: var(--red); color: #fff; }
 .pill.purple { background: rgba(191,90,242,0.16); color: #bf5af2; }
+
+/* Run/Pause agents via Telegram (static host can't write) */
+.run-pill{
+  display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;
+  border-radius:999px;background:var(--green,#00d35a);color:#000;font-weight:700;
+  font-size:14px;text-decoration:none;border:0;cursor:pointer;
+}
+.run-pill.pause{background:#2c2c2e;color:#fff}
+.run-pill .dot{width:7px;height:7px;border-radius:50%;background:#000;opacity:.55}
+.nav-sub{display:block;font-size:12px;color:rgba(255,255,255,.45);margin-top:1px;font-weight:500;letter-spacing:.01em}
+.nav-title.brand{display:flex;flex-direction:column;align-items:flex-start;gap:0;line-height:1.15}
+.nav-title.brand > span.row{display:inline-flex;align-items:center;gap:4px}
+.hero .sub-row .up{color:var(--green,#00d35a)}
+.hero .sub-row .down{color:#ff453a}

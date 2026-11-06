@@ -36,6 +36,10 @@
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
   const { fmtPrice, toMs } = window.Charts;
+  const TG_BOT = 'https://t.me/mahdi06_desk_bot';
+  const tgPause = () => TG_BOT + '?start=pause';
+  const tgResume = () => TG_BOT + '?start=resume';
+  const tgHelp = () => TG_BOT + '?start=help';
 
   /* ================= helpers ================= */
   const $ = (s, el = document) => el.querySelector(s);
@@ -99,7 +103,7 @@
     risk: { label: 'Risk', color: 'pink', hex: '#ff6b9a', glyph: '<svg viewBox="0 0 20 20"><path d="M10 2.5 16 5v4.6c0 3.8-2.6 6.4-6 7.9-3.4-1.5-6-4.1-6-7.9V5z"/><path d="M7.4 10.6h5.2"/></svg>' },
     traderwatch: { label: 'Trader-Watch', color: 'purple', hex: '#bf5af2', glyph: '<svg viewBox="0 0 20 20"><path d="M10 3.2 12.2 7.6l4.8.7-3.5 3.4.8 4.8L10 14.2l-4.3 2.3.8-4.8-3.5-3.4 4.8-.7z"/><circle cx="10" cy="10" r="2.2"/></svg>' },
   };
-  const ORDER = ['scanner', 'auditor', 'analyst', 'executor', 'risk', 'traderwatch'];
+  const ORDER = ['scanner', 'auditor', 'analyst', 'executor', 'risk'];
   const glyph = (n) => `<span class="glyph" style="background:${AG[n].hex}22;color:${AG[n].hex}">${AG[n].glyph}</span>`;
 
   const CHAIN_BADGE = {
@@ -283,7 +287,7 @@
   }
 
   /* ================= router ================= */
-  const TABS = ['home', 'agents', 'signals', 'copy', 'activity', 'account'];
+  const TABS = ['home', 'agents', 'activity', 'account'];
   let current = null;
   const stack = [];
   function parse(hash) {
@@ -583,35 +587,27 @@
     const page = { el: el(`<section>
       <header class="nav">
         <a href="#/account" class="avatar" aria-label="Account"><img src="icons/favicon.svg" alt=""></a>
-        <a href="#/agents" class="nav-title brand">Grok Bot <span class="chev">›</span></a>
+        <a href="#/agents" class="nav-title brand" data-brand>
+          <span class="row">Grok Bot <span class="chev">›</span></span>
+          <span class="nav-sub" data-modesub>…</span>
+        </a>
         <div class="grow"></div>
-        <button class="iconbtn" data-search aria-label="Search">${I.search}</button>
-        <button class="iconbtn" data-bell aria-label="Notifications">${I.bell}<span class="dot" hidden></span></button>
+        <a class="run-pill" data-run href="${tgResume()}" target="_blank" rel="noopener" aria-label="Run or pause agents">Run</a>
       </header>
       <div class="offline"></div>
       <div class="hero" style="position:relative">
         <button class="iconbtn" data-share aria-label="Share tonight" style="position:absolute;bottom:-12px;right:calc(var(--g) + var(--sar) + 6px)">${I.share}</button>
-        <div class="balance" data-bal>${skel('240px', 60)}</div><div class="muted" data-lastup style="margin-top:6px;font-size:13px;opacity:.55"></div>
+        <div class="balance" data-bal>${skel('240px', 60)}</div>
         <div class="sub-row" data-sub>${skel('180px', 18)}</div>
       </div>
       <div class="chart-wrap"><canvas></canvas><div class="chart-empty" hidden></div></div>
       <div class="ranges">${['LIVE', '1H', '4H', '1D', '1W', 'ALL'].map((r) => `<button data-r="${r}">${r === 'LIVE' ? '<i class="ldot"></i>' : ''}${r}</button>`).join('')}</div>
       <div class="chart-sep"></div>
-      <a class="sig-home" href="#/signals" data-sighome>
-        <span class="glyph" style="background:rgba(0,211,90,0.16);color:var(--green)">${I.bell}</span>
-        <div class="cl"><b>Signale</b><small data-sigpreview>Live-Kaufsignale mit FOMO-Button</small></div>
-        <span class="chev">›</span>
-      </a>
-      <a class="sig-home tw-home" href="#/signals" data-twhome>
-        <span class="glyph" style="background:rgba(191,90,242,0.16);color:#bf5af2">${AG.traderwatch.glyph}</span>
-        <div class="cl"><b>Trader-Watch</b><small data-twpreview>@panceramic · @starcatcher444 · nur Alerts</small></div>
-        <span class="chev">›</span>
-      </a>
       <div data-replay></div>
-      <div class="section-h"><h2 data-agh>Agenten</h2></div>
+      <div class="section-h"><h2 data-agh>Agents</h2></div>
       <div class="carousel"></div>
       <div class="dots">${ORDER.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>
-      <div class="section-h"><h2>Aktivität</h2><a href="#/activity">Alle</a></div>
+      <div class="section-h"><h2>Activity</h2><a href="#/activity">See all</a></div>
       <div class="list" data-act>${actSkel(5)}</div>
     </section>`) };
     const root = page.el;
@@ -632,43 +628,42 @@
       const i = Math.round(car.scrollLeft / (car.firstElementChild.offsetWidth + 10));
       $$('.dots i', root).forEach((d, k) => d.classList.toggle('on', k === i));
     }, { passive: true });
-    $('[data-search]', root).onclick = openSearch;
     $('[data-share]', root).onclick = () => window.Share && window.Share.open('night');
-    $('[data-bell]', root).onclick = () => { S.signalsNew = 0; paintTabSignalsBadge(); go('#/signals'); };
 
     function paintHero(animate = true) {
       const s = S.state; if (!s) return;
       if (balEl.querySelector('.sk')) balEl.innerHTML = '';
       if (!scrubbing) odo.set(usd(s.balance), animate);
-      const lu = $('[data-lastup]', root);
-      if (lu) {
-        const ts = s.lastUpdate || s.updatedAt;
-        if (ts) {
-          const d = new Date((ts < 1e12 ? ts * 1000 : ts));
-          lu.textContent = 'Stand: ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        } else lu.textContent = '';
+      // Honesty: never claim FOMO wallet balance — show desk mode · stack only
+      const ms = $('[data-modesub]', root);
+      if (ms) {
+        const mode = (s.mode || 'PAPER').toUpperCase();
+        ms.textContent = mode + ' · Stack ' + usd(s.balance);
       }
       const tp = num(s.todayPct);
-      $('[data-sub]', root).innerHTML = `${tp != null ? `<span class="${tp >= 0 ? 'up' : 'down'}">${tp >= 0 ? '▲' : '▼'} ${pct(tp)} today</span>` : '<span class="muted">n/a today</span>'}
-        ${num(s.multiplier) != null ? `<span class="pill green">${(+s.multiplier).toFixed(2)}×</span>` : ''}${modePill()}`;
-      $('[data-bell] .dot', root).hidden = !((S.signalsNew > 0) || (s.unread > 0 && !S.unreadSeen));
-      const prev = $('[data-sigpreview]', root);
-      if (prev) {
-        const top = S.signals && S.signals.rows && S.signals.rows[0];
-        if (top) prev.textContent = (S.signalsNew ? (S.signalsNew + ' neu · ') : '') + signalTitle(top);
-        else prev.textContent = 'Live-Kaufsignale mit FOMO-Button';
-      }
-      const twp = $('[data-twpreview]', root);
-      if (twp) {
-        const tw = (S.state.agents || []).find((a) => a.name === 'traderwatch');
-        const last = tw && tw.card && tw.card.last;
-        if (last) twp.textContent = '@' + String(last.handle || '').replace(/^@/, '') + ' ' + String(last.side || '') + (last.name ? ' · ' + last.name : '') + ' · Alert only';
-        else twp.textContent = '@panceramic · @starcatcher444 · nur Alerts';
-      }
-      paintTabSignalsBadge();
-      const agents = s.agents || [];
+      const start = num(s.nightStart) != null ? num(s.nightStart) : (num(s.balance) != null && tp != null ? num(s.balance) / (1 + tp / 100) : null);
+      const dollar = (num(s.balance) != null && start != null) ? (num(s.balance) - start) : null;
+      const up = (tp == null) || tp >= 0;
+      $('[data-sub]', root).innerHTML =
+        (tp != null
+          ? `<span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${usd(dollar, { sign: true })} (${pct(tp)})</span>`
+          : '<span class="muted">n/a</span>')
+        + (num(s.multiplier) != null ? ` <span class="pill green">${(+s.multiplier).toFixed(2)}×</span>` : '')
+        + modePill();
+      // Run/Pause via Telegram (static Pages cannot write)
+      const agents = (s.agents || []).filter((a) => ORDER.includes(a.name));
       const running = agents.filter((a) => a.status === 'running').length;
-      $('[data-agh]', root).innerHTML = `Agenten <span class="muted">· ${running} running</span>`;
+      const paused = agents.filter((a) => a.status === 'paused').length;
+      const runBtn = $('[data-run]', root);
+      if (runBtn) {
+        const allPaused = agents.length && running === 0;
+        runBtn.textContent = allPaused ? 'Run' : 'Pause';
+        runBtn.classList.toggle('pause', !allPaused);
+        runBtn.href = allPaused ? tgResume() : tgPause();
+        runBtn.title = 'Opens Telegram bot to ' + (allPaused ? 'resume' : 'pause') + ' agents (Pages is read-only)';
+      }
+      const readyOrRun = agents.filter((a) => a.status === 'running' || a.status === 'paused').length;
+      $('[data-agh]', root).innerHTML = `Agents <span class="muted">· ${running} running${paused ? ' · ' + paused + ' paused' : ''}</span>`;
       ORDER.forEach((n) => cards[n].update(agents.find((a) => a.name === n) || { name: n, status: 'down', card: {} }));
     }
     function paintChart() {
@@ -687,7 +682,7 @@
       const box = $('[data-act]', root);
       if (!S.activity) return;
       const rows = (S.activity.rows || []).slice(0, 5);
-      box.innerHTML = rows.length ? rows.map((r) => actRow(r)).join('') : '<div class="empty"><div class="dash"></div>Nothing yet tonight</div>';
+      box.innerHTML = rows.length ? rows.map((r) => actRow(r)).join('') : '<div class="empty"><div class="dash"></div><b>No trades yet</b></div>';
     }
     function paintReplay() {
       const box = $('[data-replay]', root);
@@ -802,9 +797,11 @@
 
   /* ================= AGENTS ================= */
   PAGES.agents = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Agenten</div><div class="grow"></div></header>
-      <h1 class="large-title">Agenten</h1><div class="offline"></div>
-      <div class="muted" style="padding:0 16px 16px;font-size:15px">Scanner → Auditor → Analyst → Executor → Risk</div>
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Agents</div><div class="grow"></div>
+      <a class="run-pill" data-runall href="${tgResume()}" target="_blank" rel="noopener">Run</a></header>
+      <h1 class="large-title">Agents</h1><div class="offline"></div>
+      <div class="muted" style="padding:0 16px 8px;font-size:15px">Scanner → Auditor → Analyst → Executor → Risk</div>
+      <div class="group-f" style="padding:0 16px 14px">Run/Pause opens Telegram (@mahdi06_desk_bot) — this Pages host is read-only.</div>
       <div class="group" style="margin-bottom:14px"><a class="cell link" href="#/replay" style="min-height:60px"><span class="glyph" style="background:rgba(205,255,0,0.14);color:var(--lime)">${I.replay}</span><div class="cl">Replay<small data-rpl>Was die abgelehnten Coins danach taten</small></div><span class="chev">›</span></a></div>
       <div data-list>${ORDER.map(() => `<div class="bigcard">${skel('50%', 24)}${skel('100%', 160, 'margin:16px 0 12px')}</div>`).join('')}</div></section>`) };
     const root = page.el;
@@ -827,13 +824,24 @@
             : rows.length ? shown.map((r) => decRow(r)).join('') + (rows.length > 5 ? `<button class="more" data-more>${openMore[n] ? 'Show less' : `Show all ${rows.length}`}</button>` : '')
             : `<div class="empty" style="padding:18px 0">${n === 'scanner' ? 'Listening for graduations' : n === 'auditor' ? 'No coin taken apart yet' : 'Nothing yet tonight'}</div>`}</div></div>`;
       }).join('');
-      $$('.bigcard', list).forEach((card) => {
+            const agentsAll = (s.agents || []).filter((a) => ORDER.includes(a.name));
+      const runningN = agentsAll.filter((a) => a.status === 'running').length;
+      const runAll = $('[data-runall]', root);
+      if (runAll) {
+        const allPaused = agentsAll.length && runningN === 0;
+        runAll.textContent = allPaused ? 'Run' : 'Pause';
+        runAll.classList.toggle('pause', !allPaused);
+        runAll.href = allPaused ? tgResume() : tgPause();
+      }
+$$('.bigcard', list).forEach((card) => {
         const n = card.dataset.a;
         const inp = $('.switch input', card);
-        inp.addEventListener('change', async () => {
+        inp.addEventListener('change', () => {
           const want = inp.checked;
-          try { await api(`/api/agents/${n}/${want ? 'resume' : 'pause'}`, { method: 'POST' }); const a = S.state.agents.find((x) => x.name === n); if (a) a.status = want ? 'running' : 'paused'; toast(`${AG[n].label} ${want ? 'running' : 'paused'}`); paint(); refreshStateSoon(); }
-          catch (e) { inp.checked = !want; toast(e.message); }
+          inp.checked = !want; // revert; actual control is via Telegram
+          const url = want ? tgResume() : tgPause();
+          toast(`${AG[n].label}: open Telegram to ${want ? 'resume' : 'pause'}`);
+          window.open(url, '_blank', 'noopener');
         });
         const m = $('[data-more]', card); if (m) m.onclick = () => { openMore[n] = !openMore[n]; paint(); };
       });
@@ -1063,8 +1071,8 @@
 
   /* ================= ACTIVITY ================= */
   PAGES.activity = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Aktivität</div><div class="grow"></div></header>
-      <h1 class="large-title">Aktivität</h1><div class="offline"></div>
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Activity</div><div class="grow"></div></header>
+      <h1 class="large-title">Activity</h1><div class="offline"></div>
       <div class="list" data-list>${actSkel(9)}</div><div data-sent style="height:40px"></div></section>`) };
     const root = page.el;
     let loading = false;
@@ -1074,7 +1082,7 @@
       if (!S.activity) return;
       const rows = S.activity.rows || [];
       $('[data-list]', root).innerHTML = rows.length ? rows.map((r) => actRow(r)).join('') + (S.activity.next == null ? '<div class="faint" style="text-align:center;padding:18px 0;font-size:13px">That is everything</div>' : actSkel(2))
-        : '<div class="empty"><div class="dash"></div><b>Nothing yet tonight</b>Trades and rejects land here</div>';
+        : '<div class="empty"><div class="dash"></div><b>No trades yet</b>Buys, sells and rejects land here</div>';
     }
     async function more() {
       if (loading || !S.activity || S.activity.next == null) return;
@@ -1349,7 +1357,7 @@
 
   /* ================= ACCOUNT ================= */
   PAGES.account = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Konto</div><div class="grow"></div></header>
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Account</div><div class="grow"></div></header>
       <h1 class="large-title">Account</h1><div class="offline"></div><div data-c>
       <div class="group">${Array.from({ length: 3 }, () => `<div class="cell">${skel('60%', 18)}</div>`).join('')}</div>
       <div class="group" style="margin-top:28px">${Array.from({ length: 4 }, () => `<div class="cell">${skel('70%', 18)}</div>`).join('')}</div></div></section>`) };
@@ -1367,17 +1375,19 @@
       box.innerHTML = `
         <div class="group"><div class="cell" style="min-height:76px">
           <span class="avatar" style="width:52px;height:52px"><img src="icons/favicon.svg" alt=""></span>
-          <div class="cl"><b style="font-size:20px">${esc(a.handle ? '@' + String(a.handle).replace(/^@/, '') : 'Grok Desk')}</b><small>${a.mode === 'LIVE' ? 'LIVE-Stack' : 'PAPER-Stack'} · ${usd(a.stack)}</small></div>${modePill()}</div></div>
+          <div class="cl"><b style="font-size:20px">${esc(a.handle ? '@' + String(a.handle).replace(/^@/, '') : 'Grok Desk')}</b><small>${(a.mode || 'PAPER').toUpperCase()} · Stack ${usd(a.stack)}</small></div>${modePill()}</div></div>
+        <div class="group-f">FOMO wallet balance is not readable here — this is the desk stack only.</div>
 
         <div class="group-h">Morning post</div>
         <div data-post></div>
 
         <div class="group-h">Mode</div>
         <div class="group">
-          <div class="cell"><div class="cl">Handelsmodus</div><div class="seg" data-mode><button data-m="PAPER" class="${a.mode === 'PAPER' ? 'on' : ''}">PAPER</button><button data-m="LIVE" class="${a.mode === 'LIVE' ? 'on' : ''}">LIVE</button></div></div>
-          <div class="cell"><div class="cl">Stack</div><span class="muted">$</span><input class="textf" style="flex:0 0 120px" inputmode="decimal" data-stack value="${esc(st[stackKey] ? st[stackKey].value : (a.stack != null ? a.stack : ''))}"></div>
+          <div class="cell"><div class="cl">Mode</div><div class="seg"><button class="${a.mode === 'PAPER' ? 'on' : ''}" disabled>PAPER</button><button class="${a.mode === 'LIVE' ? 'on' : ''}" disabled>LIVE</button></div></div>
+          <div class="cell"><div class="cl">Desk stack</div><span class="cv">${usd(a.stack)}</span></div>
+          <a class="cell link" href="${tgHelp()}" target="_blank" rel="noopener"><div class="cl">Change via Telegram<small>/set mode · /set stack</small></div><span class="chev">›</span></a>
         </div>
-        <div class="group-f" data-stackerr>${a.mode === 'LIVE' ? 'LIVE sizes tickets from this stack. You still tap Buy on FOMO yourself.' : 'PAPER trades a simulated stack. No real money moves.'}</div>
+        <div class="group-f" data-stackerr>${a.mode === 'LIVE' ? 'LIVE · tickets from desk stack. Desk never places orders — you buy in FOMO and tap [Bought].' : 'PAPER · simulated stack. No real money moves.'}</div>
 
         <div class="group-h">FOMO</div>
         <div class="group">
