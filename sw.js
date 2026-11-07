@@ -1,6 +1,6 @@
 /* GROMO service worker: app shell cache + Web Push. Never caches /api. */
-const CACHE = 'desk-v4';
-const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'chart.js', 'share.js', 'manifest.json', 'icons/favicon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/glyph.svg'];
+const CACHE = 'desk-v5';
+const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'data.js', 'config.js', 'chart.js', 'share.js', 'manifest.json', 'icons/favicon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/glyph.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
