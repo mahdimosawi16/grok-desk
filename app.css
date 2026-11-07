@@ -734,6 +734,8 @@ button.cell { width: 100%; text-align: left; }
 .pos-card .sig-top { align-items: flex-start; }
 .pos-card .rv { text-align: right; flex: none; margin-left: 8px; }
 .pos-card .rv b { font-size: 17px; font-weight: 700; }
+.pos-card .rv span { display: block; font-size: 13px; font-weight: 700; margin-top: 2px; }
+i.pill { font-style: normal; }
 .pos-card .cta { margin-top: 12px; }
 .tile b.up { color: var(--green); }
 .tile b.down { color: var(--red); }

@@ -271,6 +271,7 @@
     copy: null, replay: {}, replayH: 24, nightPost: null, nightPreview: null,
     signals: null, signalsSeenId: 0, signalsNew: 0,
     chat: null, copyAccount: undefined, copyPositions: undefined, copyReady: false, copyError: false,
+    signalCoins: undefined,
   };
   let sigSound = { ready: false, ids: [], pending: [] };
   let copySound = { ready: false, status: {} };
@@ -309,6 +310,23 @@
     } else if (S.copyPositions === undefined) S.copyPositions = [];
     S.copyError = !acctOk && !posOk;
     if (current && current.onEvent) current.onEvent('copy_book');
+  }
+  async function pollSignalOpens() {
+    if (DEMO || !window.DeskData || !DeskData.select) return;
+    try { if (DeskData.mode() === 'none') DeskData.init(); } catch (e) { /* ignore */ }
+    if (DeskData.mode() !== 'supabase') {
+      if (S.signalCoins === undefined) S.signalCoins = [];
+      return;
+    }
+    try {
+      const rows = await DeskData.select('desk_coins', {
+        select: 'mint,symbol:payload->>symbol,name:payload->>name,coin_url:payload->>coinUrl,pos:payload->position',
+      });
+      S.signalCoins = rows || [];
+    } catch (e) {
+      if (S.signalCoins === undefined) S.signalCoins = [];
+    }
+    if (current && current.onEvent) current.onEvent('orders');
   }
   let stateTimer = null;
   function refreshStateSoon() {
@@ -709,6 +727,9 @@
       <div class="section-h"><h2 data-agh>Agents</h2></div>
       <div class="carousel"></div>
       <div class="dots">${ORDER.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>
+      <div class="section-h"><h2>Offene Positionen</h2></div>
+      <div class="section-sub">PAPER · Spielgeld · Signal-Strategie und Copy</div>
+      <div data-open>${actSkel(2)}</div>
       <div class="section-h"><h2>Activity</h2><a href="#/activity">See all</a></div>
       <div class="list" data-act>${actSkel(5)}</div>
     </section>`) };
@@ -731,6 +752,72 @@
       $$('.dots i', root).forEach((d, k) => d.classList.toggle('on', k === i));
     }, { passive: true });
     $('[data-share]', root).onclick = () => window.Share && window.Share.open('night');
+
+    function posObj(v) {
+      if (v && typeof v === 'object') return v;
+      if (typeof v !== 'string' || !v) return null;
+      try { const o = JSON.parse(v); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+    }
+    function copyPnlPct(pnl, cost) {
+      const p = num(pnl), c = num(cost);
+      if (p == null || c == null || c === 0) return null;
+      return (p / c) * 100;
+    }
+    function homeOpens() {
+      const out = [];
+      (S.signalCoins || []).forEach((r) => {
+        const pos = posObj(r.pos);
+        if (!pos) return;
+        const mode = String(pos.mode || 'PAPER').toUpperCase();
+        if (mode !== 'PAPER') return;
+        out.push({
+          strategy: 'Signal', mint: r.mint, symbol: r.symbol, name: r.name,
+          entry: pos.entryPrice, current: null, pnlUsd: pos.pnlUsd, pnlPct: pos.pnlPct,
+          size: pos.sizeUsd, openedAt: null,
+          url: typeof r.coin_url === 'string' ? r.coin_url : '',
+        });
+      });
+      out.sort((a, b) => String(a.symbol || '').localeCompare(String(b.symbol || '')));
+      const copy = [];
+      (S.copyPositions || []).forEach((r) => {
+        if (r.status !== 'open') return;
+        copy.push({
+          strategy: 'Copy', mint: r.mint, symbol: r.symbol, name: r.symbol,
+          entry: r.entry_price, current: r.current_price, pnlUsd: r.pnl_usd,
+          pnlPct: copyPnlPct(r.pnl_usd, r.cost_usd), size: r.cost_usd, openedAt: r.opened_at,
+          url: typeof r.fomo_url === 'string' ? r.fomo_url : '',
+        });
+      });
+      copy.sort((a, b) => (Date.parse(b.openedAt) || 0) - (Date.parse(a.openedAt) || 0));
+      return out.concat(copy);
+    }
+    function homeOrderCard(r) {
+      const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : (r.name || 'Position');
+      const pnl = num(r.pnlUsd);
+      const pp = num(r.pnlPct);
+      const cls = pnl == null ? (pp == null || pp === 0 ? '' : pp > 0 ? 'up' : 'down') : pnl > 0 ? 'up' : pnl < 0 ? 'down' : '';
+      const when = r.openedAt ? berlinTime(r.openedAt) : '';
+      const pills = [
+        num(r.size) != null ? `<span class="pill grey">Größe ${esc(usd(r.size))}</span>` : '',
+        `<span class="pill mono grey">Einstieg ${esc(fmtPrice(num(r.entry)))}</span>`,
+        num(r.current) != null ? `<span class="pill mono grey">Kurs ${esc(fmtPrice(num(r.current)))}</span>` : '',
+        when ? `<span class="pill grey">Eröffnet ${esc(when)}</span>` : '',
+      ].filter(Boolean).join('');
+      const link = r.url ? `<a class="cta" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
+      const strat = r.strategy === 'Copy' ? 'purple' : 'orange';
+      return `<article class="sig-card pos-card">
+        <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.name || r.symbol, chain: 'solana' })}
+          <div class="rt"><b>${esc(sym)} <i class="pill ${strat}">${esc(r.strategy)}</i></b><span>${esc(r.name || '')}</span></div>
+          <div class="rv"><b class="${cls}">${pnl == null ? '—' : usd(pnl, { sign: true })}</b>${pp == null ? '' : `<span class="${cls}">${pct(pp, 1)}</span>`}</div></div>
+        <div class="sig-meta">${pills}</div>${link}</article>`;
+    }
+    function paintOrders() {
+      const box = $('[data-open]', root);
+      if (!box) return;
+      if (S.signalCoins === undefined && S.copyPositions === undefined) { box.innerHTML = actSkel(2); return; }
+      const rows = homeOpens();
+      box.innerHTML = rows.length ? rows.map(homeOrderCard).join('') : '<div class="empty" style="padding:8px 0 14px"><b>Keine offenen Positionen</b></div>';
+    }
 
     function paintHero(animate = true) {
       const s = S.state; if (!s) return;
@@ -804,7 +891,8 @@
     $$('.ranges button', root).forEach((b) => b.addEventListener('click', () => { S.range = b.dataset.r; paintChart(); loadChart(S.range); }));
 
     page.load = async function load() {
-      paintHero(false); paintChart(); paintAct(); paintReplay(); loadReplay();
+      paintHero(false); paintChart(); paintAct(); paintReplay(); paintOrders(); loadReplay();
+      pollSignalOpens();
       try {
         const [st, ch, ac, sg] = await Promise.all([
           api('/api/state'), api('/api/chart?range=' + S.range), api('/api/activity'),
@@ -845,6 +933,7 @@
         if (S.activity) { box.innerHTML = (S.activity.rows || []).slice(0, 5).map((r, i) => actRow(r, i === 0)).join(''); }
         paintHero();
       }
+      if (type === 'orders' || type === 'copy_book') paintOrders();
     };
     page.destroy = () => chart.destroy();
     return page;
@@ -2439,8 +2528,10 @@ $$('.bigcard', list).forEach((card) => {
         }
       } catch (e) {}
       pollCopy();
+      pollSignalOpens();
     }, 8000);
     pollCopy();
+    pollSignalOpens();
   })();
   if (DEMO) {
     window.__desk = { S, go };
