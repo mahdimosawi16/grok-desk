@@ -270,7 +270,7 @@
     coin: {}, audit: {}, decisions: {}, unreadSeen: false, layerLive: {},
     copy: null, replay: {}, replayH: 24, nightPost: null, nightPreview: null,
     signals: null, signalsSeenId: 0, signalsNew: 0,
-    chat: null, copyAccount: undefined, copyPositions: undefined, copyReady: false, copyError: false,
+    copyAccount: undefined, copyPositions: undefined, copyReady: false, copyError: false,
     signalCoins: undefined,
   };
   let sigSound = { ready: false, ids: [], pending: [] };
@@ -405,7 +405,7 @@
   }
 
   /* ================= router ================= */
-  const TABS = ['home', 'agents', 'activity', 'copy', 'chat', 'account'];
+  const TABS = ['home', 'agents', 'activity', 'copy', 'account'];
   let current = null;
   const stack = [];
   function parse(hash) {
@@ -1764,146 +1764,6 @@ $$('.bigcard', list).forEach((card) => {
         S.account = a; S.settings = s; net.ok(); paint();
         if (!S.state) api('/api/state').then((st) => { S.state = st; paint(); }).catch(() => {});
       } catch (e) { net.fail(load, e); }
-    };
-    return page;
-  };
-
-  /* ================= CHAT ================= */
-  const CHAT_CHIPS = ['Wie steht mein Konto?', 'Offene Positionen', 'Copy-Konto', 'Letzte Signale', 'Hilfe'];
-  function chatWhen(ts) {
-    const t = Date.parse(ts);
-    if (!t) return '';
-    return new Date(t).toLocaleString('de-DE', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-  }
-  function linkify(text) {
-    return esc(text).replace(/https?:\/\/[^\s<]+/g, (raw) => {
-      let u = raw, tail = '';
-      while (u && /[.,;:!?)]/.test(u.charAt(u.length - 1))) { tail = u.charAt(u.length - 1) + tail; u = u.slice(0, -1); }
-      if (!u) return raw;
-      return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>${tail}`;
-    });
-  }
-  function chatFail(e) {
-    const m = String((e && e.message) || '');
-    if (/rate limit/i.test(m)) return 'Zu viele Nachrichten. Bitte eine Minute warten.';
-    if (/1-500|character/i.test(m)) return 'Bitte 1 bis 500 Zeichen schreiben.';
-    if (e && (e.status === 404 || e.status === 400)) return 'Der Chat ist gerade nicht erreichbar.';
-    if (!e || e.status === 0) return 'Keine Verbindung. Bitte nochmal versuchen.';
-    return 'Nachricht konnte nicht gesendet werden.';
-  }
-  function deskIsTyping(rows) {
-    const replied = new Set();
-    (rows || []).forEach((r) => { if (r.role === 'desk' && r.reply_to != null) replied.add(String(r.reply_to)); });
-    const now = Date.now();
-    return (rows || []).some((r) => {
-      if (r.role !== 'user' || replied.has(String(r.id))) return false;
-      const age = now - Date.parse(r.created_at);
-      return isNaN(age) || age < 120000;
-    });
-  }
-  PAGES.chat = function () {
-    const page = { el: el(`<section class="chat-page"><header class="nav"><div class="nav-center">Chat</div><div class="grow"></div>
-      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
-      <div class="chat-sub">Frag den Desk · PAPER, keine echten Orders</div>
-      <div class="offline"></div>
-      <div class="chat-log" data-log></div>
-      <div class="chat-dock">
-        <div class="chat-chips">${CHAT_CHIPS.map((c) => `<button type="button" data-chip="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-        <form class="chat-form" data-form>
-          <input type="text" maxlength="500" placeholder="Frage an den Desk…" enterkeyhint="send" autocomplete="off" autocapitalize="sentences">
-          <button type="submit" class="send">Senden</button>
-        </form>
-        <div class="chat-err" data-err></div>
-      </div></section>`), name: 'chat' };
-    const root = page.el;
-    const log = $('[data-log]', root);
-    const err = $('[data-err]', root);
-    const form = $('[data-form]', root);
-    const field = $('input', form);
-    const sendBtn = $('button.send', form);
-    let alive = true;
-    let timer = null;
-    let sending = false;
-    function showErr(text) { err.textContent = text || ''; }
-    function paint() {
-      if (!alive) return;
-      if (S.chat == null) { log.innerHTML = actSkel(5); return; }
-      const rows = S.chat || [];
-      const stick = !log.dataset.ready || (log.scrollHeight - log.scrollTop - log.clientHeight < 90);
-      if (!rows.length && S.chatError) {
-        log.innerHTML = `<div class="empty"><div class="dash"></div><b>Chat nicht erreichbar</b>${esc(S.chatError)}</div>`;
-      } else if (!rows.length) {
-        log.innerHTML = '<div class="empty"><div class="dash"></div><b>Noch keine Nachrichten</b>Frag den Desk etwas. Die Antwort kommt auf Deutsch.</div>';
-      } else {
-        const typing = deskIsTyping(rows);
-        log.innerHTML = rows.map((r) => {
-          const mine = r.role === 'user';
-          return `<div class="chat-row ${mine ? 'user' : 'desk'}"><div class="bubble">${linkify(r.text || '')}</div><div class="chat-time">${esc(mine ? 'Du' : 'Desk')} · ${esc(chatWhen(r.created_at))}</div></div>`;
-        }).join('') + (typing ? '<div class="chat-row desk"><div class="bubble chat-typing">Desk tippt…</div></div>' : '');
-      }
-      if (stick) log.scrollTop = log.scrollHeight;
-      log.dataset.ready = '1';
-    }
-    async function loadMsgs() {
-      if (!alive || !window.DeskData || !DeskData.select) return;
-      try {
-        if (DeskData.mode() === 'none') DeskData.init();
-        if (DeskData.mode() !== 'supabase') throw Object.assign(new Error('no data backend'), { status: 0 });
-        const rows = await DeskData.select('chat_messages', {
-          select: 'id,created_at,role,text,reply_to',
-          order: 'id.desc',
-          limit: '200',
-        });
-        if (!alive) return;
-        const map = new Map();
-        (S.chat || []).forEach((r) => { if (r && r.id != null && !String(r.id).startsWith('tmp')) map.set(String(r.id), r); });
-        (rows || []).forEach((r) => map.set(String(r.id), r));
-        S.chat = [...map.values()].sort((a, b) => (+a.id || 0) - (+b.id || 0)).slice(-200);
-        S.chatError = '';
-        paint();
-      } catch (e) {
-        if (!alive) return;
-        if (!S.chat || !S.chat.length) { S.chatError = chatFail(e); S.chat = S.chat || []; paint(); }
-      }
-    }
-    async function send(text) {
-      const v = String(text || '').trim();
-      if (!v || sending) return;
-      if (v.length > 500) { showErr('Bitte 1 bis 500 Zeichen schreiben.'); return; }
-      showErr('');
-      sending = true; sendBtn.disabled = true;
-      try {
-        if (DeskData.mode() === 'none') DeskData.init();
-        const id = await DeskData.rpc('chat_post', { p_text: v });
-        field.value = '';
-        const row = { id: id, created_at: new Date().toISOString(), role: 'user', text: v, reply_to: null };
-        S.chat = (S.chat || []).concat(row);
-        S.chatError = '';
-        paint();
-        loadMsgs();
-      } catch (e) {
-        showErr(chatFail(e));
-      } finally {
-        sending = false; sendBtn.disabled = false;
-      }
-    }
-    form.addEventListener('submit', (e) => { e.preventDefault(); send(field.value); });
-    field.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(field.value); }
-    });
-    $$('[data-chip]', root).forEach((b) => b.addEventListener('click', () => send(b.dataset.chip)));
-    const vv = window.visualViewport;
-    const lift = () => {
-      if (!vv || !alive) return;
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      root.style.bottom = inset ? inset + 'px' : '';
-    };
-    if (vv) { vv.addEventListener('resize', lift); vv.addEventListener('scroll', lift); }
-    page.load = function load() { paint(); loadMsgs(); timer = setInterval(loadMsgs, 2500); };
-    page.destroy = () => {
-      alive = false;
-      clearInterval(timer);
-      if (vv) { vv.removeEventListener('resize', lift); vv.removeEventListener('scroll', lift); }
     };
     return page;
   };
