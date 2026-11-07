@@ -159,5 +159,90 @@
     return () => { try { client.removeChannel(ch); } catch (e) {} };
   }
 
-  w.DeskData = { init, get, subscribe, subscribeSignals, mode: () => mode, dataPath };
+  async function select(table, params) {
+    if (mode === 'none') init();
+    if (mode !== 'supabase') throw Object.assign(new Error('no data backend'), { status: 0 });
+    return restRows(table, params);
+  }
+
+  async function rpc(fn, args) {
+    if (mode === 'none') init();
+    if (mode !== 'supabase') throw Object.assign(new Error('no data backend'), { status: 0 });
+    const r = await fetch(cfg.supabaseUrl + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.supabaseAnonKey,
+        Authorization: 'Bearer ' + cfg.supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args || {}),
+      cache: 'no-store',
+    });
+    const text = await r.text();
+    let body = null;
+    if (text) { try { body = JSON.parse(text); } catch (e) { body = text; } }
+    if (!r.ok) {
+      const msg = (body && (body.message || body.error || body.hint)) || ('rpc ' + r.status);
+      throw Object.assign(new Error(msg), { status: r.status, body });
+    }
+    return body;
+  }
+
+  /* First full snapshot is silent. Later ids sound. partial=true queues rows that
+     arrive before the first snapshot (realtime) so history loaded with the page stays quiet. */
+  function diffPaperSignals(state, rows, partial) {
+    const prevIds = new Set((state && state.ids) || []);
+    const pending = (state && state.pending) || [];
+    const list = rows || [];
+    const soundOf = (r) => (r && r.kind === 'paper_buy' ? 'buy' : r && r.kind === 'paper_sell' ? 'sell' : null);
+    if (!state || !state.ready) {
+      if (partial) return { ready: false, ids: [...prevIds], pending: pending.concat(list), sounds: [] };
+      const ids = new Set(prevIds);
+      list.forEach((r) => { if (r && r.id != null) ids.add(String(r.id)); });
+      const sounds = [];
+      pending.forEach((r) => {
+        if (!r || r.id == null) return;
+        const id = String(r.id);
+        if (ids.has(id)) return;
+        ids.add(id);
+        const s = soundOf(r); if (s) sounds.push(s);
+      });
+      return { ready: true, ids: [...ids], pending: [], sounds };
+    }
+    const ids = new Set(prevIds);
+    const sounds = [];
+    list.forEach((r) => {
+      if (!r || r.id == null) return;
+      const id = String(r.id);
+      if (ids.has(id)) return;
+      ids.add(id);
+      const s = soundOf(r); if (s) sounds.push(s);
+    });
+    return { ready: true, ids: [...ids], pending: [], sounds };
+  }
+
+  /* New open row = buy. open -> closed = sell. Rows already present, or first seen already closed, stay quiet.
+     qty/cost going to 0 is not itself a sell. Ids missing from this page keep their last status. */
+  function diffCopyPositions(state, rows) {
+    const prev = state && state.ready ? (state.status || {}) : null;
+    const status = Object.assign({}, prev || {});
+    const sounds = [];
+    const list = rows || [];
+    if (!prev) {
+      list.forEach((r) => { if (r && r.id != null) status[String(r.id)] = r.status || ''; });
+      return { ready: true, status, sounds };
+    }
+    list.forEach((r) => {
+      if (!r || r.id == null) return;
+      const id = String(r.id);
+      const st = r.status || '';
+      const known = Object.prototype.hasOwnProperty.call(prev, id);
+      if (!known && st === 'open') sounds.push('buy');
+      else if (known && prev[id] === 'open' && st === 'closed') sounds.push('sell');
+      status[id] = st;
+    });
+    return { ready: true, status, sounds };
+  }
+
+  w.DeskData = { init, get, subscribe, subscribeSignals, select, rpc, diffPaperSignals, diffCopyPositions, mode: () => mode, dataPath };
 })(window);

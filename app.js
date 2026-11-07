@@ -84,6 +84,65 @@
     clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 1800);
   }
 
+  /* Paper buy/sell tones. iOS only plays after a user gesture unlocks the context. */
+  const SOUND_KEY = 'desk.sound';
+  const Sound = {
+    enabled() { try { return localStorage.getItem(SOUND_KEY) === '1'; } catch (e) { return false; } },
+    setEnabled(on) { try { localStorage.setItem(SOUND_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ } },
+    ctx: null,
+    unlocked: false,
+    ensure() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      if (!this.ctx) this.ctx = new AC();
+      return this.ctx;
+    },
+    unlock() {
+      const c = this.ensure();
+      if (!c) return;
+      if (c.state === 'suspended') c.resume();
+      try {
+        const buf = c.createBuffer(1, 1, 22050);
+        const src = c.createBufferSource();
+        src.buffer = buf; src.connect(c.destination); src.start(0);
+      } catch (e) { /* ignore */ }
+      this.unlocked = true;
+    },
+    tone(freqs, step, type, peak) {
+      const c = this.ensure();
+      if (!c || !this.unlocked) return;
+      if (c.state === 'suspended') c.resume();
+      const now = c.currentTime;
+      freqs.forEach((f, i) => {
+        const o = c.createOscillator();
+        const g = c.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f, now);
+        const t0 = now + i * step;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(peak, t0 + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+        o.connect(g); g.connect(c.destination);
+        o.start(t0); o.stop(t0 + 0.16);
+      });
+    },
+    play(side) {
+      if (!this.enabled() || !this.unlocked) return;
+      if (side === 'buy') this.tone([523.25, 659.25, 783.99], 0.08, 'sine', 0.16);
+      else if (side === 'sell') this.tone([392, 311.13, 246.94], 0.09, 'triangle', 0.14);
+    },
+    blip() { this.tone([660], 0.08, 'sine', 0.07); },
+  };
+  function paintSoundButtons() {
+    const on = Sound.enabled();
+    $$('[data-sound]').forEach((b) => {
+      b.textContent = on ? 'Ton an' : 'Ton aus';
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.setAttribute('aria-label', on ? 'Ton an' : 'Ton aus');
+    });
+  }
+
   /* ================= icons ================= */
   const I = {
     search: '<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.6-4.6"/></svg>',
@@ -211,7 +270,46 @@
     coin: {}, audit: {}, decisions: {}, unreadSeen: false, layerLive: {},
     copy: null, replay: {}, replayH: 24, nightPost: null, nightPreview: null,
     signals: null, signalsSeenId: 0, signalsNew: 0,
+    chat: null, copyAccount: undefined, copyPositions: undefined, copyReady: false, copyError: false,
   };
+  let sigSound = { ready: false, ids: [], pending: [] };
+  let copySound = { ready: false, status: {} };
+  function ingestSignalRows(rows, partial) {
+    if (!window.DeskData || !DeskData.diffPaperSignals) return;
+    const diff = DeskData.diffPaperSignals(sigSound, rows, !!partial);
+    sigSound = { ready: diff.ready, ids: diff.ids, pending: diff.pending };
+    diff.sounds.forEach((s) => Sound.play(s));
+  }
+  async function pollCopy() {
+    if (DEMO || !window.DeskData || !DeskData.select) return;
+    try { if (DeskData.mode() === 'none') DeskData.init(); } catch (e) { /* ignore */ }
+    if (DeskData.mode() !== 'supabase') return;
+    let acctOk = false, posOk = false, acct = null, rows = [];
+    try {
+      const a = await DeskData.select('copy_account', { select: '*', id: 'eq.1' });
+      acct = (a && a[0]) || null;
+      acctOk = true;
+    } catch (e) { /* missing table or network */ }
+    try {
+      const [openRows, closedRows] = await Promise.all([
+        DeskData.select('copy_positions', { select: '*', status: 'eq.open', order: 'opened_at.desc' }),
+        DeskData.select('copy_positions', { select: '*', status: 'eq.closed', order: 'closed_at.desc', limit: '40' }),
+      ]);
+      rows = (openRows || []).concat(closedRows || []);
+      posOk = true;
+    } catch (e) { /* missing table or network */ }
+    if (acctOk) S.copyAccount = acct;
+    else if (S.copyAccount === undefined) S.copyAccount = null;
+    if (posOk) {
+      const diff = DeskData.diffCopyPositions(copySound.ready ? copySound : null, rows);
+      copySound = diff;
+      diff.sounds.forEach((s) => Sound.play(s));
+      S.copyPositions = rows;
+      S.copyReady = true;
+    } else if (S.copyPositions === undefined) S.copyPositions = [];
+    S.copyError = !acctOk && !posOk;
+    if (current && current.onEvent) current.onEvent('copy_book');
+  }
   let stateTimer = null;
   function refreshStateSoon() {
     if (stateTimer) return;
@@ -289,7 +387,7 @@
   }
 
   /* ================= router ================= */
-  const TABS = ['home', 'agents', 'activity', 'account'];
+  const TABS = ['home', 'agents', 'activity', 'copy', 'chat', 'account'];
   let current = null;
   const stack = [];
   function parse(hash) {
@@ -323,6 +421,7 @@
     current = page;
     $$('#tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === (r.depth ? null : r.name)));
     $('#tabbar').classList.toggle('hidden', r.depth > 0);
+    paintSoundButtons();
     paintBanners();
     page.load && page.load();
     if (prev) {
@@ -520,7 +619,7 @@
   }
   function kindLabel(k, isTest) {
     if (isTest) return 'TEST';
-    const m = { signal: 'Kauf-Signal', warn: 'Warnung', reject: 'Abgelehnt', health: 'System', night: 'Nacht', exit: 'Exit', info: 'Info', test: 'TEST', trader_buy: 'Trader BUY', trader_sell: 'Trader SELL' };
+    const m = { signal: 'Kauf-Signal', warn: 'Warnung', reject: 'Abgelehnt', health: 'System', night: 'Nacht', exit: 'Exit', info: 'Info', test: 'TEST', trader_buy: 'Trader BUY', trader_sell: 'Trader SELL', paper_buy: 'Paper-Kauf', paper_sell: 'Paper-Verkauf' };
     return m[k] || (k || 'Info');
   }
   function signalTitle(r) {
@@ -712,6 +811,7 @@
           api('/api/signals').catch(() => S.signals || { rows: [] }),
         ]);
         S.state = st; S.chart[S.range] = ch; S.activity = ac; S.signals = sg;
+        ingestSignalRows(sg && sg.rows);
         if (sg && sg.rows && sg.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +sg.rows[0].id || 0);
         net.ok(); paintHero(); paintChart(); paintAct();
       } catch (e) { net.fail(load, e); }
@@ -801,6 +901,7 @@
   /* ================= AGENTS ================= */
   PAGES.agents = function () {
     const page = { el: el(`<section><header class="nav"><div class="nav-center">Agents</div><div class="grow"></div>
+      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button>
       <a class="run-pill" data-runall href="${tgResume()}" target="_blank" rel="noopener">Run</a></header>
       <h1 class="large-title">Agents</h1><div class="offline"></div>
       <div class="muted" style="padding:0 16px 8px;font-size:15px">Scanner → Auditor → Analyst → Executor → Risk</div>
@@ -895,7 +996,7 @@ $$('.bigcard', list).forEach((card) => {
     return (v === 'rejected' ? '#/audit/' : '#/coin/') + encodeURIComponent(address);
   };
 
-  PAGES.copy = function () {
+  PAGES.copyTraders = function () {
     const page = { el: el(`<section><header class="nav"><div class="nav-center">Copy</div><div class="grow"></div></header>
       <h1 class="large-title">Copy</h1><div class="offline"></div>
       <div data-c><div class="cstate">${skel('12px', 12, 'border-radius:6px')}<div class="cl">${skel('55%', 18)}${skel('40%', 13, 'margin-top:8px')}</div></div>
@@ -1060,6 +1161,7 @@ $$('.bigcard', list).forEach((card) => {
       paint();
       try {
         S.signals = await api('/api/signals');
+        ingestSignalRows(S.signals && S.signals.rows);
         if (S.signals.rows && S.signals.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +S.signals.rows[0].id || 0);
         S.signalsNew = 0; paintTabSignalsBadge();
         net.ok(); paint();
@@ -1074,7 +1176,8 @@ $$('.bigcard', list).forEach((card) => {
 
   /* ================= ACTIVITY ================= */
   PAGES.activity = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Activity</div><div class="grow"></div></header>
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Activity</div><div class="grow"></div>
+      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
       <h1 class="large-title">Activity</h1><div class="offline"></div>
       <div class="list" data-list>${actSkel(9)}</div><div data-sent style="height:40px"></div></section>`) };
     const root = page.el;
@@ -1360,7 +1463,8 @@ $$('.bigcard', list).forEach((card) => {
 
   /* ================= ACCOUNT ================= */
   PAGES.account = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Account</div><div class="grow"></div></header>
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Account</div><div class="grow"></div>
+      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
       <h1 class="large-title">Account</h1><div class="offline"></div><div data-c>
       <div class="group">${Array.from({ length: 3 }, () => `<div class="cell">${skel('60%', 18)}</div>`).join('')}</div>
       <div class="group" style="margin-top:28px">${Array.from({ length: 4 }, () => `<div class="cell">${skel('70%', 18)}</div>`).join('')}</div></div></section>`) };
@@ -1572,6 +1676,246 @@ $$('.bigcard', list).forEach((card) => {
         if (!S.state) api('/api/state').then((st) => { S.state = st; paint(); }).catch(() => {});
       } catch (e) { net.fail(load, e); }
     };
+    return page;
+  };
+
+  /* ================= CHAT ================= */
+  const CHAT_CHIPS = ['Wie steht mein Konto?', 'Offene Positionen', 'Copy-Konto', 'Letzte Signale', 'Hilfe'];
+  function chatWhen(ts) {
+    const t = Date.parse(ts);
+    if (!t) return '';
+    return new Date(t).toLocaleString('de-DE', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  }
+  function linkify(text) {
+    return esc(text).replace(/https?:\/\/[^\s<]+/g, (raw) => {
+      let u = raw, tail = '';
+      while (u && /[.,;:!?)]/.test(u.charAt(u.length - 1))) { tail = u.charAt(u.length - 1) + tail; u = u.slice(0, -1); }
+      if (!u) return raw;
+      return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>${tail}`;
+    });
+  }
+  function chatFail(e) {
+    const m = String((e && e.message) || '');
+    if (/rate limit/i.test(m)) return 'Zu viele Nachrichten. Bitte eine Minute warten.';
+    if (/1-500|character/i.test(m)) return 'Bitte 1 bis 500 Zeichen schreiben.';
+    if (e && (e.status === 404 || e.status === 400)) return 'Der Chat ist gerade nicht erreichbar.';
+    if (!e || e.status === 0) return 'Keine Verbindung. Bitte nochmal versuchen.';
+    return 'Nachricht konnte nicht gesendet werden.';
+  }
+  function deskIsTyping(rows) {
+    const replied = new Set();
+    (rows || []).forEach((r) => { if (r.role === 'desk' && r.reply_to != null) replied.add(String(r.reply_to)); });
+    const now = Date.now();
+    return (rows || []).some((r) => {
+      if (r.role !== 'user' || replied.has(String(r.id))) return false;
+      const age = now - Date.parse(r.created_at);
+      return isNaN(age) || age < 120000;
+    });
+  }
+  PAGES.chat = function () {
+    const page = { el: el(`<section class="chat-page"><header class="nav"><div class="nav-center">Chat</div><div class="grow"></div>
+      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
+      <div class="chat-sub">Frag den Desk · PAPER, keine echten Orders</div>
+      <div class="offline"></div>
+      <div class="chat-log" data-log></div>
+      <div class="chat-dock">
+        <div class="chat-chips">${CHAT_CHIPS.map((c) => `<button type="button" data-chip="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+        <form class="chat-form" data-form>
+          <input type="text" maxlength="500" placeholder="Frage an den Desk…" enterkeyhint="send" autocomplete="off" autocapitalize="sentences">
+          <button type="submit" class="send">Senden</button>
+        </form>
+        <div class="chat-err" data-err></div>
+      </div></section>`), name: 'chat' };
+    const root = page.el;
+    const log = $('[data-log]', root);
+    const err = $('[data-err]', root);
+    const form = $('[data-form]', root);
+    const field = $('input', form);
+    const sendBtn = $('button.send', form);
+    let alive = true;
+    let timer = null;
+    let sending = false;
+    function showErr(text) { err.textContent = text || ''; }
+    function paint() {
+      if (!alive) return;
+      if (S.chat == null) { log.innerHTML = actSkel(5); return; }
+      const rows = S.chat || [];
+      const stick = !log.dataset.ready || (log.scrollHeight - log.scrollTop - log.clientHeight < 90);
+      if (!rows.length && S.chatError) {
+        log.innerHTML = `<div class="empty"><div class="dash"></div><b>Chat nicht erreichbar</b>${esc(S.chatError)}</div>`;
+      } else if (!rows.length) {
+        log.innerHTML = '<div class="empty"><div class="dash"></div><b>Noch keine Nachrichten</b>Frag den Desk etwas. Die Antwort kommt auf Deutsch.</div>';
+      } else {
+        const typing = deskIsTyping(rows);
+        log.innerHTML = rows.map((r) => {
+          const mine = r.role === 'user';
+          return `<div class="chat-row ${mine ? 'user' : 'desk'}"><div class="bubble">${linkify(r.text || '')}</div><div class="chat-time">${esc(mine ? 'Du' : 'Desk')} · ${esc(chatWhen(r.created_at))}</div></div>`;
+        }).join('') + (typing ? '<div class="chat-row desk"><div class="bubble chat-typing">Desk tippt…</div></div>' : '');
+      }
+      if (stick) log.scrollTop = log.scrollHeight;
+      log.dataset.ready = '1';
+    }
+    async function loadMsgs() {
+      if (!alive || !window.DeskData || !DeskData.select) return;
+      try {
+        if (DeskData.mode() === 'none') DeskData.init();
+        if (DeskData.mode() !== 'supabase') throw Object.assign(new Error('no data backend'), { status: 0 });
+        const rows = await DeskData.select('chat_messages', {
+          select: 'id,created_at,role,text,reply_to',
+          order: 'id.desc',
+          limit: '200',
+        });
+        if (!alive) return;
+        const map = new Map();
+        (S.chat || []).forEach((r) => { if (r && r.id != null && !String(r.id).startsWith('tmp')) map.set(String(r.id), r); });
+        (rows || []).forEach((r) => map.set(String(r.id), r));
+        S.chat = [...map.values()].sort((a, b) => (+a.id || 0) - (+b.id || 0)).slice(-200);
+        S.chatError = '';
+        paint();
+      } catch (e) {
+        if (!alive) return;
+        if (!S.chat || !S.chat.length) { S.chatError = chatFail(e); S.chat = S.chat || []; paint(); }
+      }
+    }
+    async function send(text) {
+      const v = String(text || '').trim();
+      if (!v || sending) return;
+      if (v.length > 500) { showErr('Bitte 1 bis 500 Zeichen schreiben.'); return; }
+      showErr('');
+      sending = true; sendBtn.disabled = true;
+      try {
+        if (DeskData.mode() === 'none') DeskData.init();
+        const id = await DeskData.rpc('chat_post', { p_text: v });
+        field.value = '';
+        const row = { id: id, created_at: new Date().toISOString(), role: 'user', text: v, reply_to: null };
+        S.chat = (S.chat || []).concat(row);
+        S.chatError = '';
+        paint();
+        loadMsgs();
+      } catch (e) {
+        showErr(chatFail(e));
+      } finally {
+        sending = false; sendBtn.disabled = false;
+      }
+    }
+    form.addEventListener('submit', (e) => { e.preventDefault(); send(field.value); });
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(field.value); }
+    });
+    $$('[data-chip]', root).forEach((b) => b.addEventListener('click', () => send(b.dataset.chip)));
+    const vv = window.visualViewport;
+    const lift = () => {
+      if (!vv || !alive) return;
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      root.style.bottom = inset ? inset + 'px' : '';
+    };
+    if (vv) { vv.addEventListener('resize', lift); vv.addEventListener('scroll', lift); }
+    page.load = function load() { paint(); loadMsgs(); timer = setInterval(loadMsgs, 2500); };
+    page.destroy = () => {
+      alive = false;
+      clearInterval(timer);
+      if (vv) { vv.removeEventListener('resize', lift); vv.removeEventListener('scroll', lift); }
+    };
+    return page;
+  };
+
+  /* ================= COPY-TRADING (PAPER account, separate from the main desk account) ================= */
+  function traderTxt(t) {
+    const s = String(t || '').replace(/^@+/, '').trim();
+    return s ? '@' + s : '—';
+  }
+  function qtyTxt(v) {
+    v = num(v);
+    if (v == null) return '—';
+    if (v === 0) return '0';
+    const a = Math.abs(v);
+    if (a >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (a >= 1) return v.toLocaleString('en-US', { maximumFractionDigits: 4 });
+    return v.toPrecision(4);
+  }
+  function moneyOrDash(v) { return num(v) == null ? '—' : usd(v); }
+  function pnlHtml(v) {
+    const n = num(v);
+    if (n == null) return '<b>—</b>';
+    const cls = n > 0 ? 'up' : n < 0 ? 'down' : '';
+    return `<b class="${cls}">${usd(n, { sign: true })}</b>`;
+  }
+  function sortPositions(rows) {
+    const open = [], closed = [];
+    (rows || []).forEach((r) => (r.status === 'open' ? open : closed).push(r));
+    const ts = (r, k) => Date.parse(r[k] || '') || 0;
+    open.sort((a, b) => ts(b, 'opened_at') - ts(a, 'opened_at'));
+    closed.sort((a, b) => (ts(b, 'closed_at') - ts(a, 'closed_at')) || (ts(b, 'opened_at') - ts(a, 'opened_at')));
+    return { open, closed: closed.slice(0, 40) };
+  }
+  function posCard(r) {
+    const open = r.status === 'open';
+    const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : (r.mint ? String(r.mint).slice(0, 4) + '…' : 'Position');
+    const when = open ? (r.opened_at ? 'seit ' + ago(r.opened_at) : '') : (r.closed_at ? 'geschlossen ' + ago(r.closed_at) : '');
+    const reason = !open && r.close_reason ? r.close_reason : '';
+    const sub = [traderTxt(r.trader), when, reason].filter(Boolean).join(' · ');
+    const link = (typeof r.fomo_url === 'string' && r.fomo_url) ? `<a class="cta" href="${esc(r.fomo_url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
+    return `<article class="sig-card pos-card">
+      <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol || sym, chain: 'solana' })}
+        <div class="rt"><b>${esc(sym)} <span class="side ${open ? 'buy' : 'sell'}">${open ? 'Offen' : 'Zu'}</span></b><span>${esc(sub)}</span></div>
+        <div class="rv">${pnlHtml(r.pnl_usd)}</div></div>
+      <div class="sig-meta">
+        <span class="pill grey">Einsatz ${esc(moneyOrDash(r.cost_usd))}</span>
+        <span class="pill grey">Menge ${esc(qtyTxt(r.qty))}</span>
+        <span class="pill mono grey">Einstieg ${esc(fmtPrice(num(r.entry_price)))}</span>
+        <span class="pill mono grey">Kurs ${esc(fmtPrice(num(r.current_price)))}</span>
+      </div>${link}</article>`;
+  }
+  PAGES.copy = function () {
+    const page = { el: el(`<section><header class="nav"><div class="nav-center">Copy-Trading</div><div class="grow"></div>
+      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
+      <h1 class="large-title">Copy-Trading</h1>
+      <div class="copy-note">PAPER · Spielgeld. Kein echtes Geld und keine Wallet. Das Hauptkonto bleibt separat.</div>
+      <div class="offline"></div>
+      <div data-c>${actSkel(4)}</div></section>`), name: 'copy' };
+    const root = page.el;
+    const box = $('[data-c]', root);
+    function paint() {
+      if (S.copyPositions === undefined && !S.copyError) { box.innerHTML = actSkel(4); return; }
+      if (S.copyError && !S.copyReady) {
+        box.innerHTML = '<div class="empty"><div class="dash"></div><b>Copy-Konto nicht erreichbar</b>Die Tabelle fehlt oder das Netz ist weg. Es wird nichts abgebrochen.</div>';
+        return;
+      }
+      const a = S.copyAccount || {};
+      const parts = sortPositions(S.copyPositions || []);
+      const upd = a.updated_at ? berlinTime(a.updated_at) : '';
+      const tiles = [
+        ['Stack', moneyOrDash(a.stack_usd)],
+        ['Cash', moneyOrDash(a.cash_usd)],
+        ['Realisiert', null],
+        ['Unrealisiert', null],
+        ['Offen', num(a.open_positions) == null ? String(parts.open.length) : intf(a.open_positions)],
+        ['Trades heute', num(a.trades_today) == null ? '—' : intf(a.trades_today)],
+      ];
+      box.innerHTML = `
+        <div class="hero">
+          <div class="hero-label">Equity <span class="pill orange">PAPER</span> <span class="pill grey">Spielgeld</span></div>
+          <div class="balance small">${S.copyAccount ? esc(moneyOrDash(a.equity_usd)) : '—'}</div>
+          <div class="sub-row">${pnlHtml(a.unrealized_pnl_usd)} <span class="muted">offen</span> ${pnlHtml(a.realized_pnl_usd)} <span class="muted">realisiert</span></div>
+        </div>
+        <div class="tiles">
+          <div class="tile"><span>Stack</span><b>${esc(tiles[0][1])}</b></div>
+          <div class="tile"><span>Cash</span><b>${esc(tiles[1][1])}</b></div>
+          <div class="tile"><span>Modus</span><b>${esc(a.mode || 'PAPER')}</b></div>
+        </div>
+        <div class="tiles">
+          <div class="tile"><span>Realisiert</span>${pnlHtml(a.realized_pnl_usd)}</div>
+          <div class="tile"><span>Unrealisiert</span>${pnlHtml(a.unrealized_pnl_usd)}</div>
+          <div class="tile"><span>Offen</span><b>${esc(tiles[4][1])}</b><small>${esc(tiles[5][0])} ${esc(tiles[5][1])}</small></div>
+        </div>
+        <div class="section-sub">${upd ? 'Aktualisiert ' + esc(upd) + ' · ' : ''}PAPER / Spielgeld</div>
+        <div class="section-h"><h2>Offene Positionen</h2></div>
+        ${parts.open.length ? parts.open.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Keine offenen Positionen</b></div>'}
+        <div class="section-h"><h2>Geschlossen</h2></div>
+        ${parts.closed.length ? parts.closed.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Noch keine geschlossenen Trades</b></div>'}`;
+    }
+    page.load = function load() { paint(); pollCopy(); };
+    page.onEvent = (t) => { if (t === 'copy_book') paint(); };
     return page;
   };
 
@@ -2040,6 +2384,16 @@ $$('.bigcard', list).forEach((card) => {
   /* ================= boot ================= */
   if ('serviceWorker' in navigator && standalone() && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!location.hash || location.hash === '#' || location.hash === '#/') history.replaceState(null, '', location.pathname + location.search + '#/home');
+  document.addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest && ev.target.closest('[data-sound]');
+    if (!b) return;
+    const next = !Sound.enabled();
+    Sound.setEnabled(next);
+    Sound.unlock();
+    paintSoundButtons();
+    if (next) Sound.blip();
+  });
+  window.addEventListener('pointerdown', () => { if (Sound.enabled()) Sound.unlock(); }, { capture: true, passive: true });
   route();
   if (window.Share) window.Share.init({ api, S, DEMO, toast, coins: DEMO ? (s) => Demo.bySym[s] : null });
   if (!DEMO_STATE) startStream();
@@ -2052,8 +2406,17 @@ $$('.bigcard', list).forEach((card) => {
       S.state = st; net.ok();
       if (current && current.onState) current.onState();
     });
+    (async () => {
+      try {
+        const sg = await api('/api/signals');
+        if (!S.signals) S.signals = sg;
+        ingestSignalRows(sg && sg.rows);
+        if (sg && sg.rows && sg.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +sg.rows[0].id || 0);
+      } catch (e) { /* first snapshot can fail; the interval retries */ }
+    })();
     DeskData.subscribeSignals((row) => {
       if (!row) return;
+      ingestSignalRows([row], true);
       mergeSignalRow(row);
       if (current && current.onEvent) current.onEvent('desk_signal', row);
       else paintTabSignalsBadge();
@@ -2064,6 +2427,7 @@ $$('.bigcard', list).forEach((card) => {
         const sg = await api('/api/signals');
         const prevTop = S.signals && S.signals.rows && S.signals.rows[0] && S.signals.rows[0].id;
         S.signals = sg;
+        ingestSignalRows(sg && sg.rows);
         const top = sg && sg.rows && sg.rows[0];
         if (top && String(top.id) !== String(prevTop)) {
           if (!(current && current.name === 'signals')) {
@@ -2074,7 +2438,9 @@ $$('.bigcard', list).forEach((card) => {
           if (current && current.onState) current.onState();
         }
       } catch (e) {}
+      pollCopy();
     }, 8000);
+    pollCopy();
   })();
   if (DEMO) {
     window.__desk = { S, go };
