@@ -173,11 +173,32 @@
   };
   const PALETTE = ['#ffd60a', '#64d2ff', '#ff9f0a', '#30d158', '#bf5af2', '#ff6b9a', '#5e5ce6', '#66d4cf', '#ff453a', '#ac8e68'];
   function hashStr(s) { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function httpUrl(v) {
+    const s = String(v == null ? '' : v).trim();
+    return /^https?:\/\//i.test(s) ? s : '';
+  }
+  function knownCoin(mint) {
+    const hit = { image: '', symbol: '', name: '' };
+    if (!mint) return hit;
+    const take = (r) => {
+      if (!r || r.mint !== mint) return;
+      if (!hit.image && r.image) hit.image = r.image;
+      if (!hit.symbol && r.symbol) hit.symbol = r.symbol;
+      if (!hit.name && r.name) hit.name = r.name;
+    };
+    ((S.signals && S.signals.rows) || []).forEach(take);
+    (S.signalCoins || []).forEach(take);
+    return hit;
+  }
   function coinAvatar(c, big) {
-    const name = c.symbol || c.name || '?';
+    c = c || {};
+    const known = c.mint ? knownCoin(c.mint) : { image: '', symbol: '', name: '' };
+    const name = c.symbol || known.symbol || c.name || known.name || '?';
     const letter = esc(String(name).replace(/^\$/, '').charAt(0).toUpperCase() || '?');
     const col = PALETTE[hashStr(c.mint || name) % PALETTE.length];
-    const img = c.image ? `<img src="${esc(c.image)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'mono',textContent:'${letter}',style:'background:${col}'}))">`
+    const src = httpUrl(c.image) || httpUrl(known.image);
+    const img = src
+      ? `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'mono',textContent:'${letter}',style:'background:${col}'}))">`
       : `<span class="mono" style="background:${col}">${letter}</span>`;
     return `<span class="coin-av${big ? ' big' : ''}">${img}${CHAIN_BADGE[c.chain] || ''}</span>`;
   }
@@ -320,7 +341,7 @@
     }
     try {
       const rows = await DeskData.select('desk_coins', {
-        select: 'mint,symbol:payload->>symbol,name:payload->>name,coin_url:payload->>coinUrl,pos:payload->position',
+        select: 'mint,symbol:payload->>symbol,name:payload->>name,image:payload->>image,coin_url:payload->>coinUrl,pos:payload->position',
       });
       S.signalCoins = rows || [];
     } catch (e) {
@@ -771,7 +792,7 @@
         const mode = String(pos.mode || 'PAPER').toUpperCase();
         if (mode !== 'PAPER') return;
         out.push({
-          strategy: 'Signal', mint: r.mint, symbol: r.symbol, name: r.name,
+          strategy: 'Signal', mint: r.mint, symbol: r.symbol, name: r.name, image: r.image,
           entry: pos.entryPrice, current: null, pnlUsd: pos.pnlUsd, pnlPct: pos.pnlPct,
           size: pos.sizeUsd, openedAt: null,
           url: typeof r.coin_url === 'string' ? r.coin_url : '',
@@ -782,7 +803,7 @@
       (S.copyPositions || []).forEach((r) => {
         if (r.status !== 'open') return;
         copy.push({
-          strategy: 'Copy', mint: r.mint, symbol: r.symbol, name: r.symbol,
+          strategy: 'Copy', mint: r.mint, symbol: r.symbol, name: r.symbol, image: r.image,
           entry: r.entry_price, current: r.current_price, pnlUsd: r.pnl_usd,
           pnlPct: copyPnlPct(r.pnl_usd, r.cost_usd), size: r.cost_usd, openedAt: r.opened_at,
           url: typeof r.fomo_url === 'string' ? r.fomo_url : '',
@@ -806,7 +827,7 @@
       const link = r.url ? `<a class="cta" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
       const strat = r.strategy === 'Copy' ? 'purple' : 'orange';
       return `<article class="sig-card pos-card">
-        <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.name || r.symbol, chain: 'solana' })}
+        <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.name || r.symbol, image: r.image, chain: 'solana' })}
           <div class="rt"><b>${esc(sym)} <i class="pill ${strat}">${esc(r.strategy)}</i></b><span>${esc(r.name || '')}</span></div>
           <div class="rv"><b class="${cls}">${pnl == null ? '—' : usd(pnl, { sign: true })}</b>${pp == null ? '' : `<span class="${cls}">${pct(pp, 1)}</span>`}</div></div>
         <div class="sig-meta">${pills}</div>${link}</article>`;
@@ -933,7 +954,8 @@
         if (S.activity) { box.innerHTML = (S.activity.rows || []).slice(0, 5).map((r, i) => actRow(r, i === 0)).join(''); }
         paintHero();
       }
-      if (type === 'orders' || type === 'copy_book') paintOrders();
+      if (type === 'orders' || type === 'copy_book') { paintOrders(); paintAct(); }
+      if (type === 'desk_signal') paintAct();
     };
     page.destroy = () => chart.destroy();
     return page;
@@ -1292,7 +1314,7 @@ $$('.bigcard', list).forEach((card) => {
       paint();
       try { S.activity = await api('/api/activity'); net.ok(); paint(); } catch (e) { net.fail(load, e); }
     };
-    page.onEvent = (t) => { if (t === 'activity' && S.activity) { const rows = S.activity.rows; $('[data-list]', root).innerHTML = rows.map((r, i) => actRow(r, i === 0)).join(''); } };
+    page.onEvent = (t) => { if ((t === 'activity' || t === 'desk_signal' || t === 'orders') && S.activity) paint(); };
     page.destroy = () => io.disconnect();
     return page;
   };
@@ -1805,7 +1827,7 @@ $$('.bigcard', list).forEach((card) => {
     const sub = [traderTxt(r.trader), when, reason].filter(Boolean).join(' · ');
     const link = (typeof r.fomo_url === 'string' && r.fomo_url) ? `<a class="cta" href="${esc(r.fomo_url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
     return `<article class="sig-card pos-card">
-      <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol || sym, chain: 'solana' })}
+      <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol || sym, image: r.image, chain: 'solana' })}
         <div class="rt"><b>${esc(sym)} <span class="side ${open ? 'buy' : 'sell'}">${open ? 'Offen' : 'Zu'}</span></b><span>${esc(sub)}</span></div>
         <div class="rv">${pnlHtml(r.pnl_usd)}</div></div>
       <div class="sig-meta">
@@ -1864,7 +1886,7 @@ $$('.bigcard', list).forEach((card) => {
         ${parts.closed.length ? parts.closed.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Noch keine geschlossenen Trades</b></div>'}`;
     }
     page.load = function load() { paint(); pollCopy(); };
-    page.onEvent = (t) => { if (t === 'copy_book') paint(); };
+    page.onEvent = (t) => { if (t === 'copy_book' || t === 'orders') paint(); };
     return page;
   };
 
