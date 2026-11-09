@@ -445,7 +445,6 @@ button.cell { width: 100%; text-align: left; }
 #tabbar a[data-tab=signals].has-new svg .sig-badge { display: block; animation: sigPulse 1.4s ease-in-out infinite; }
 @keyframes sigPulse { 0%,100%{ transform: scale(1); opacity: 1;} 50%{ transform: scale(1.15); opacity: .75;} }
 #tabbar a[data-tab=account] svg path { fill: none; stroke-width: 2.1; stroke-linecap: round; }
-#tabbar a[data-tab=copy] svg path, #tabbar a[data-tab=copy] svg rect { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #tabbar a.on { color: var(--lime); }
 
 /* ---------- desk chip (the Auditor's opinion on a coin) ---------- */
@@ -688,6 +687,11 @@ button.cell { width: 100%; text-align: left; }
 /* ---------- copy account (PAPER) ---------- */
 .copy-note { padding: 0 calc(var(--g) + var(--sal)) 4px; color: var(--text2); font-size: 13px; }
 .section-h.copy-h { padding-top: 16px; padding-bottom: 8px; }
+.copy-kicker {
+  padding: 10px calc(var(--g) + var(--sal)) 0;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: var(--text2);
+}
+.list > .copy-kicker { padding-left: 0; padding-right: 0; }
 .copy-sum {
   display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
   margin: 0 calc(var(--g) + var(--sal)) 4px; padding: 10px 12px;
@@ -705,6 +709,7 @@ button.cell { width: 100%; text-align: left; }
 .copy-list .row .rt b { display: flex; align-items: center; gap: 6px; font-size: 16px; }
 .copy-list .row .rt b .sym { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .copy-list .row .rt span { font-size: 13px; }
+.copy-list .row .rt span.wrap { white-space: normal; overflow: visible; text-overflow: unset; line-height: 1.25; }
 .copy-list .row .rv b { font-size: 16px; }
 .copy-list .row .rv span { font-size: 13px; font-weight: 700; }
 .copy-list .more { border-radius: 0; }
