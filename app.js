@@ -292,6 +292,7 @@
     copy: null, replay: {}, replayH: 24, nightPost: null, nightPreview: null,
     signals: null, signalsSeenId: 0, signalsNew: 0,
     copyAccount: undefined, copyPositions: undefined, copyReady: false, copyError: false,
+    traderAlerts: undefined,
     signalCoins: undefined,
   };
   let sigSound = { ready: false, ids: [], pending: [] };
@@ -320,8 +321,17 @@
       rows = (openRows || []).concat(closedRows || []);
       posOk = true;
     } catch (e) { /* missing table or network */ }
-    if (acctOk) S.copyAccount = acct;
-    else if (S.copyAccount === undefined) S.copyAccount = null;
+    if (acctOk) {
+      S.copyAccount = acct;
+      const eq = num(acct && acct.equity_usd);
+      if (eq != null) {
+        const trail = S.copyTrail || (S.copyTrail = []);
+        const now = Date.now();
+        const last = trail[trail.length - 1];
+        if (!last || now - last[0] >= 8000 || Math.abs(last[1] - eq) >= 0.005) trail.push([now, eq]);
+        if (trail.length > 400) trail.splice(0, trail.length - 400);
+      }
+    } else if (S.copyAccount === undefined) S.copyAccount = null;
     if (posOk) {
       const diff = DeskData.diffCopyPositions(copySound.ready ? copySound : null, rows);
       copySound = diff;
@@ -329,8 +339,29 @@
       S.copyPositions = rows;
       S.copyReady = true;
     } else if (S.copyPositions === undefined) S.copyPositions = [];
+    try {
+      const alerts = await DeskData.select('desk_signals', {
+        select: 'id,ts,kind,mint,name,symbol,body,text,url,image',
+        kind: 'in.(trader_buy,trader_sell)',
+        order: 'ts.desc',
+        limit: '40',
+      });
+      if (Array.isArray(alerts)) {
+        const seen = new Set(alerts.map((r) => String(r.id)));
+        const fresh = (S.traderAlerts || []).filter((r) => r && r.id != null && !seen.has(String(r.id)) && (Date.now() - (toMs(r.ts) || 0)) < 30000);
+        S.traderAlerts = fresh.concat(alerts).sort((a, b) => (toMs(b.ts) || 0) - (toMs(a.ts) || 0)).slice(0, 40);
+      }
+    } catch (e) { /* Home falls back to trader rows already in S.signals */ }
     S.copyError = !acctOk && !posOk;
     if (current && current.onEvent) current.onEvent('copy_book');
+  }
+  function ingestTraderAlert(row) {
+    if (!row || (row.kind !== 'trader_buy' && row.kind !== 'trader_sell') || row.id == null) return;
+    const list = S.traderAlerts ? S.traderAlerts.slice() : [];
+    const i = list.findIndex((x) => String(x.id) === String(row.id));
+    if (i >= 0) list[i] = row; else list.unshift(row);
+    list.sort((a, b) => (toMs(b.ts) || 0) - (toMs(a.ts) || 0));
+    S.traderAlerts = list.slice(0, 40);
   }
   async function pollSignalOpens() {
     if (DEMO || !window.DeskData || !DeskData.select) return;
@@ -738,21 +769,16 @@
       <div class="offline"></div>
       <div class="hero" style="position:relative">
         <button class="iconbtn" data-share aria-label="Share tonight" style="position:absolute;bottom:-12px;right:calc(var(--g) + var(--sar) + 6px)">${I.share}</button>
+        <div class="hero-label">Equity</div>
         <div class="balance" data-bal>${skel('240px', 60)}</div>
         <div class="sub-row" data-sub>${skel('180px', 18)}</div>
       </div>
       <div class="chart-wrap"><canvas></canvas><div class="chart-empty" hidden></div></div>
       <div class="ranges">${['LIVE', '1H', '4H', '1D', '1W', 'ALL'].map((r) => `<button data-r="${r}">${r === 'LIVE' ? '<i class="ldot"></i>' : ''}${r}</button>`).join('')}</div>
       <div class="chart-sep"></div>
-      <div data-replay></div>
-      <div class="section-h"><h2 data-agh>Agents</h2></div>
-      <div class="carousel"></div>
-      <div class="dots">${ORDER.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>
-      <div class="section-h"><h2>Offene Positionen</h2></div>
-      <div class="section-sub">PAPER · Spielgeld · Signal-Strategie und Copy</div>
-      <div data-open>${actSkel(2)}</div>
-      <div class="section-h"><h2>Activity</h2><a href="#/activity">See all</a></div>
-      <div class="list" data-act>${actSkel(5)}</div>
+      <div class="section-h copy-h"><h2>Copy-Trades <span class="muted">· PAPER</span></h2></div>
+      <div data-copy-sum></div>
+      <div class="list copy-list" data-copy></div>
     </section>`) };
     const root = page.el;
     const balEl = $('[data-bal]', root);
@@ -765,197 +791,281 @@
         scrubbing = true; odo.set(usd(v), false);
       },
     });
-    const cards = {};
-    const car = $('.carousel', root);
-    ORDER.forEach((n) => { cards[n] = makeCard(n); car.appendChild(cards[n].node); });
-    car.addEventListener('scroll', () => {
-      const i = Math.round(car.scrollLeft / (car.firstElementChild.offsetWidth + 10));
-      $$('.dots i', root).forEach((d, k) => d.classList.toggle('on', k === i));
-    }, { passive: true });
     $('[data-share]', root).onclick = () => window.Share && window.Share.open('night');
 
-    function posObj(v) {
-      if (v && typeof v === 'object') return v;
-      if (typeof v !== 'string' || !v) return null;
-      try { const o = JSON.parse(v); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
-    }
     function copyPnlPct(pnl, cost) {
       const p = num(pnl), c = num(cost);
       if (p == null || c == null || c === 0) return null;
       return (p / c) * 100;
     }
-    function homeOpens() {
-      const out = [];
-      (S.signalCoins || []).forEach((r) => {
-        const pos = posObj(r.pos);
-        if (!pos) return;
-        const mode = String(pos.mode || 'PAPER').toUpperCase();
-        if (mode !== 'PAPER') return;
-        out.push({
-          strategy: 'Signal', mint: r.mint, symbol: r.symbol, name: r.name, image: r.image,
-          entry: pos.entryPrice, current: null, pnlUsd: pos.pnlUsd, pnlPct: pos.pnlPct,
-          size: pos.sizeUsd, openedAt: null,
-          url: typeof r.coin_url === 'string' ? r.coin_url : '',
-        });
-      });
-      out.sort((a, b) => String(a.symbol || '').localeCompare(String(b.symbol || '')));
-      const copy = [];
-      (S.copyPositions || []).forEach((r) => {
-        if (r.status !== 'open') return;
-        copy.push({
-          strategy: 'Copy', mint: r.mint, symbol: r.symbol, name: r.symbol, image: r.image,
-          entry: r.entry_price, current: r.current_price, pnlUsd: r.pnl_usd,
-          pnlPct: copyPnlPct(r.pnl_usd, r.cost_usd), size: r.cost_usd, openedAt: r.opened_at,
-          url: typeof r.fomo_url === 'string' ? r.fomo_url : '',
-        });
-      });
-      copy.sort((a, b) => (Date.parse(b.openedAt) || 0) - (Date.parse(a.openedAt) || 0));
-      return out.concat(copy);
-    }
-    function homeOrderCard(r) {
-      const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : (r.name || 'Position');
-      const pnl = num(r.pnlUsd);
-      const pp = num(r.pnlPct);
-      const cls = pnl == null ? (pp == null || pp === 0 ? '' : pp > 0 ? 'up' : 'down') : pnl > 0 ? 'up' : pnl < 0 ? 'down' : '';
-      const when = r.openedAt ? berlinTime(r.openedAt) : '';
-      const pills = [
-        num(r.size) != null ? `<span class="pill grey">Größe ${esc(usd(r.size))}</span>` : '',
-        `<span class="pill mono grey">Einstieg ${esc(fmtPrice(num(r.entry)))}</span>`,
-        num(r.current) != null ? `<span class="pill mono grey">Kurs ${esc(fmtPrice(num(r.current)))}</span>` : '',
-        when ? `<span class="pill grey">Eröffnet ${esc(when)}</span>` : '',
-      ].filter(Boolean).join('');
-      const link = r.url ? `<a class="cta" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
-      const strat = r.strategy === 'Copy' ? 'purple' : 'orange';
-      return `<article class="sig-card pos-card">
-        <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.name || r.symbol, image: r.image, chain: 'solana' })}
-          <div class="rt"><b>${esc(sym)} <i class="pill ${strat}">${esc(r.strategy)}</i></b><span>${esc(r.name || '')}</span></div>
-          <div class="rv"><b class="${cls}">${pnl == null ? '—' : usd(pnl, { sign: true })}</b>${pp == null ? '' : `<span class="${cls}">${pct(pp, 1)}</span>`}</div></div>
-        <div class="sig-meta">${pills}</div>${link}</article>`;
-    }
-    function paintOrders() {
-      const box = $('[data-open]', root);
-      if (!box) return;
-      if (S.signalCoins === undefined && S.copyPositions === undefined) { box.innerHTML = actSkel(2); return; }
-      const rows = homeOpens();
-      box.innerHTML = rows.length ? rows.map(homeOrderCard).join('') : '<div class="empty" style="padding:8px 0 14px"><b>Keine offenen Positionen</b></div>';
+    function copyFigures() {
+      const a = S.copyAccount;
+      if (!a) return null;
+      const equity = num(a.equity_usd);
+      const stack = num(a.stack_usd);
+      const realized = num(a.realized_pnl_usd);
+      const unreal = num(a.unrealized_pnl_usd);
+      let pnl = null;
+      if (equity != null && stack != null) pnl = equity - stack;
+      else if (realized != null || unreal != null) pnl = (realized || 0) + (unreal || 0);
+      return {
+        equity, stack, pnl,
+        pnlPct: (pnl != null && stack) ? (pnl / stack) * 100 : null,
+        mult: (equity != null && stack) ? equity / stack : null,
+        mode: String(a.mode || 'PAPER').toUpperCase(),
+      };
     }
 
-    function paintHero(animate = true) {
-      const s = S.state; if (!s) return;
-      if (balEl.querySelector('.sk')) balEl.innerHTML = '';
-      if (!scrubbing) odo.set(usd(s.balance), animate);
-      // Honesty: never claim FOMO wallet balance — show desk mode · stack only
-      const ms = $('[data-modesub]', root);
-      if (ms) {
-        const mode = (s.mode || 'PAPER').toUpperCase();
-        ms.textContent = mode + ' · Stack ' + usd(s.balance);
+    const CLOSE_DE = {
+      trader_sell: 'Trader-Verkauf',
+      daily_0800: 'Tagesabschluss 08:00',
+      '10x_half': '10× Hälfte',
+      stop_loss: 'Stop-Loss',
+      stale_closed: 'Veraltet',
+    };
+    let copyMore = false;
+    let copySig = '';
+    function normHandle(h) { return String(h || '').replace(/^@+/, '').trim().toLowerCase(); }
+    function trackedHandles() {
+      const set = new Set();
+      const agents = (S.state && S.state.agents) || [];
+      const card = ((agents.find((a) => a.name === 'traderwatch') || {}).card) || {};
+      (card.watching || []).forEach((h) => { const n = normHandle(h); if (n) set.add(n); });
+      const tw = S.state && S.state.traderwatch;
+      if (Array.isArray(tw)) tw.forEach((t) => {
+        const raw = typeof t === 'string' ? t : (t && (t.trader || t.handle));
+        const n = normHandle(raw);
+        if (n) set.add(n);
+      });
+      return set;
+    }
+    function traderFromSignal(r) {
+      const body = String((r && (r.body || r.text)) || '');
+      const m = body.match(/Trader-Watch\s*[·|:]\s*@([A-Za-z0-9_.]+)\s+(BUY|SELL)\b/i);
+      if (!m) return null;
+      return { handle: m[1], side: m[2].toLowerCase() === 'sell' ? 'sell' : 'buy' };
+    }
+    function closeDe(reason) {
+      if (!reason) return '';
+      if (CLOSE_DE[reason]) return CLOSE_DE[reason];
+      return String(reason).replace(/_/g, ' ');
+    }
+    function copyFeed() {
+      const tracked = trackedHandles();
+      const allow = (h) => !tracked.size || tracked.has(normHandle(h));
+      const rows = [];
+      const buyKeys = new Set();
+      const sellKeys = new Set();
+      (S.copyPositions || []).forEach((p) => {
+        if (!p || !allow(p.trader)) return;
+        const open = p.status === 'open';
+        const handle = normHandle(p.trader);
+        const sym = String(p.symbol || '').replace(/^\$/, '').trim().toLowerCase();
+        const ck = p.mint ? ('m:' + p.mint) : (sym ? 's:' + sym : '');
+        if (ck) {
+          buyKeys.add(ck + '|' + handle);
+          if (!open) sellKeys.add(ck + '|' + handle);
+        }
+        const ts = toMs(open ? p.opened_at : (p.closed_at || p.opened_at));
+        rows.push({
+          key: 'pos-' + p.id,
+          ts,
+          mint: p.mint,
+          symbol: p.symbol,
+          image: p.image,
+          handle: p.trader,
+          side: open ? 'buy' : 'sell',
+          reason: open ? '' : closeDe(p.close_reason),
+          pnl: p.pnl_usd,
+          cost: p.cost_usd,
+          url: typeof p.fomo_url === 'string' ? p.fomo_url : '',
+        });
+      });
+      const alerts = Array.isArray(S.traderAlerts)
+        ? S.traderAlerts
+        : ((S.signals && S.signals.rows) || []).filter((r) => r && (r.kind === 'trader_buy' || r.kind === 'trader_sell'));
+      alerts.forEach((s) => {
+        const who = traderFromSignal(s);
+        if (!who || !allow(who.handle)) return;
+        const handle = normHandle(who.handle);
+        const sym = String(s.symbol || '').replace(/^\$/, '').trim().toLowerCase();
+        const ck = s.mint ? ('m:' + s.mint) : (sym ? 's:' + sym : '');
+        const k = ck ? ck + '|' + handle : '';
+        if (k && who.side === 'buy' && buyKeys.has(k)) return;
+        if (k && who.side === 'sell' && sellKeys.has(k)) return;
+        rows.push({
+          key: 'sig-' + s.id,
+          ts: toMs(s.ts),
+          mint: s.mint,
+          symbol: s.symbol || s.name,
+          image: s.image,
+          handle: who.handle,
+          side: who.side,
+          reason: 'Alarm',
+          pnl: null,
+          cost: null,
+          url: typeof s.url === 'string' ? s.url : '',
+        });
+      });
+      rows.sort((a, b) => (b.ts || 0) - (a.ts || 0) || String(a.key).localeCompare(String(b.key)));
+      return rows;
+    }
+    function copySummaryHtml() {
+      const a = S.copyAccount;
+      const cash = a ? moneyOrDash(a.cash_usd) : '—';
+      const eq = a ? moneyOrDash(a.equity_usd) : '—';
+      const realized = num(a && a.realized_pnl_usd);
+      const unreal = num(a && a.unrealized_pnl_usd);
+      const pnl = (realized == null && unreal == null) ? null : (realized || 0) + (unreal || 0);
+      const cls = pnl == null || pnl === 0 ? '' : pnl > 0 ? 'up' : 'down';
+      const pnlTxt = pnl == null ? '—' : usd(pnl, { sign: true });
+      return `<div class="copy-sum" data-copy-line><span>Cash <b>${esc(cash)}</b></span><i></i><span>Equity <b>${esc(eq)}</b></span><i></i><span>G&amp;V <b class="${cls}">${esc(pnlTxt)}</b></span></div>`;
+    }
+    function copyRow(r) {
+      const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : 'Coin';
+      const buy = r.side === 'buy';
+      const sub = [traderTxt(r.handle), r.reason].filter(Boolean).join(' · ');
+      const pnl = num(r.pnl);
+      const pp = copyPnlPct(r.pnl, r.cost);
+      const cls = pnl == null || pnl === 0 ? '' : pnl > 0 ? 'up' : 'down';
+      const pnlTxt = pnl == null ? '—' : usd(pnl, { sign: true });
+      const pctTxt = pp == null ? '' : pct(pp, 1);
+      const href = (typeof r.url === 'string' && /^https?:\/\//i.test(r.url)) ? r.url : '';
+      const inner = `${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol, image: r.image })}
+        <div class="rt"><b><span class="sym">${esc(sym)}</span><span class="side ${buy ? 'buy' : 'sell'}">${buy ? 'KAUF' : 'VERKAUF'}</span></b><span>${esc(sub)}</span></div>
+        <div class="rv"><b class="${cls}">${esc(pnlTxt)}</b>${pctTxt ? `<span class="${cls}">${esc(pctTxt)}</span>` : '<span class="muted">—</span>'}</div>`;
+      if (!href) return `<div class="row">${inner}</div>`;
+      return `<a class="row" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+    }
+    function paintCopy() {
+      const box = $('[data-copy]', root);
+      const sum = $('[data-copy-sum]', root);
+      if (!box || !sum) return;
+      const waiting = !DEMO && S.copyPositions === undefined && S.traderAlerts === undefined && !S.signals && !S.copyError;
+      if (waiting) {
+        const sk = `<div class="copy-sum">${skel('100%', 14, 'margin:0')}</div>` + actSkel(3);
+        if (sk === copySig) return;
+        copySig = sk;
+        sum.innerHTML = `<div class="copy-sum">${skel('100%', 14, 'margin:0')}</div>`;
+        box.innerHTML = actSkel(3);
+        return;
       }
-      const tp = num(s.todayPct);
-      const start = num(s.nightStart) != null ? num(s.nightStart) : (num(s.balance) != null && tp != null ? num(s.balance) / (1 + tp / 100) : null);
-      const dollar = (num(s.balance) != null && start != null) ? (num(s.balance) - start) : null;
-      const up = (tp == null) || tp >= 0;
-      $('[data-sub]', root).innerHTML =
-        (tp != null
-          ? `<span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${usd(dollar, { sign: true })} (${pct(tp)})</span>`
-          : '<span class="muted">n/a</span>')
-        + (num(s.multiplier) != null ? ` <span class="pill green">${(+s.multiplier).toFixed(2)}×</span>` : '')
-        + modePill();
-      // Run/Pause via Telegram (static Pages cannot write)
+      const rows = copyFeed();
+      const preview = 6;
+      const collapsed = !copyMore && rows.length > 8;
+      const shown = collapsed ? rows.slice(0, preview) : rows.slice(0, 48);
+      const sumHtml = copySummaryHtml();
+      let listHtml = shown.length
+        ? shown.map(copyRow).join('')
+        : '<div class="empty" style="padding:4px 0 12px"><b>Noch keine Copy-Trades</b></div>';
+      if (S.copyError && !shown.length) listHtml = '<div class="empty" style="padding:4px 0 12px"><b>Copy-Daten gerade nicht erreichbar</b></div>';
+      if (rows.length > 8) listHtml += `<button type="button" class="more" data-copy-more>${copyMore ? 'Weniger' : 'Mehr'}</button>`;
+      const sig = sumHtml + '\n' + listHtml;
+      if (sig === copySig) return;
+      copySig = sig;
+      sum.innerHTML = sumHtml;
+      box.innerHTML = listHtml;
+      const more = $('[data-copy-more]', box);
+      if (more) more.onclick = () => { copyMore = !copyMore; copySig = ''; paintCopy(); };
+    }
+
+    function paintRun() {
+      const s = S.state; if (!s) return;
       const agents = (s.agents || []).filter((a) => ORDER.includes(a.name));
       const running = agents.filter((a) => a.status === 'running').length;
-      const paused = agents.filter((a) => a.status === 'paused').length;
       const runBtn = $('[data-run]', root);
-      if (runBtn) {
-        const allPaused = agents.length && running === 0;
-        runBtn.textContent = allPaused ? 'Run' : 'Pause';
-        runBtn.classList.toggle('pause', !allPaused);
-        runBtn.href = allPaused ? tgResume() : tgPause();
-        runBtn.title = 'Opens Telegram bot to ' + (allPaused ? 'resume' : 'pause') + ' agents (Pages is read-only)';
-      }
-      const readyOrRun = agents.filter((a) => a.status === 'running' || a.status === 'paused').length;
-      $('[data-agh]', root).innerHTML = `Agents <span class="muted">· ${running} running${paused ? ' · ' + paused + ' paused' : ''}</span>`;
-      ORDER.forEach((n) => cards[n].update(agents.find((a) => a.name === n) || { name: n, status: 'down', card: {} }));
+      if (!runBtn) return;
+      const allPaused = agents.length && running === 0;
+      runBtn.textContent = allPaused ? 'Run' : 'Pause';
+      runBtn.classList.toggle('pause', !allPaused);
+      runBtn.href = allPaused ? tgResume() : tgPause();
+      runBtn.title = 'Opens Telegram bot to ' + (allPaused ? 'resume' : 'pause') + ' agents (Pages is read-only)';
+    }
+    function paintHero(animate = true) {
+      const f = copyFigures();
+      const ms = $('[data-modesub]', root);
+      if (ms) ms.textContent = (f ? f.mode : 'PAPER') + ' · Stack ' + (f && f.stack != null ? usd(f.stack) : '…');
+      if (!f || f.equity == null) return;
+      if (balEl.querySelector('.sk')) balEl.innerHTML = '';
+      if (!scrubbing) odo.set(usd(f.equity), animate);
+      const up = f.pnl == null || f.pnl >= 0;
+      const pill = f.mode === 'LIVE' ? '<span class="pill green">LIVE</span>' : '<span class="pill orange">PAPER</span>';
+      $('[data-sub]', root).innerHTML =
+        (f.pnl != null
+          ? `<span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${usd(f.pnl, { sign: true })}${f.pnlPct != null ? ' (' + pct(f.pnlPct) + ')' : ''}</span>`
+          : '<span class="muted">G&V —</span>')
+        + (f.mult != null ? ` <span class="pill green">${f.mult.toFixed(2)}×</span>` : '')
+        + pill;
+      paintRun();
+    }
+    const RANGE_MS = { LIVE: 15 * 60 * 1000, '1H': 3600000, '4H': 4 * 3600000, '1D': 86400000, '1W': 7 * 86400000, ALL: Infinity };
+    function copySeries() {
+      const a = S.copyAccount || {};
+      const stack = num(a.stack_usd);
+      const equity = num(a.equity_usd);
+      const now = Date.now();
+      const pts = [];
+      const opens = (S.copyPositions || []).map((p) => toMs(p.opened_at)).filter((t) => t > 0);
+      const t0 = opens.length ? Math.min.apply(null, opens) : (toMs(a.updated_at) || now);
+      if (stack != null) pts.push([Math.min(t0, now), stack]);
+      const closes = (S.copyPositions || []).filter((p) => p && p.status === 'closed' && toMs(p.closed_at));
+      closes.sort((x, y) => toMs(x.closed_at) - toMs(y.closed_at));
+      let acc = stack;
+      closes.forEach((p) => {
+        if (acc == null) return;
+        acc += num(p.pnl_usd) || 0;
+        pts.push([toMs(p.closed_at), acc]);
+      });
+      (S.copyTrail || []).forEach((p) => { if (p && p[1] != null) pts.push([p[0], p[1]]); });
+      if (equity != null) pts.push([now, equity]);
+      pts.sort((x, y) => x[0] - y[0]);
+      const out = [];
+      pts.forEach((p) => {
+        if (!out.length || p[0] > out[out.length - 1][0]) out.push(p);
+        else out[out.length - 1] = p;
+      });
+      return { points: out, start: stack, equity };
     }
     function paintChart() {
-      const d = S.chart[S.range];
       $$('.ranges button', root).forEach((b) => b.classList.toggle('on', b.dataset.r === S.range));
       const empty = $('.chart-empty', root);
-      if (!d) { empty.hidden = false; empty.innerHTML = skel('calc(100% - 32px)', 200); chart.setData({ points: [] }); return; }
-      if (!d.points || d.points.length < 2) {
-        empty.hidden = false; empty.innerHTML = '<div class="dash"></div><span>Waiting for the first trade</span>';
+      if (S.copyAccount == null && !S.copyError) {
+        empty.hidden = false; empty.innerHTML = skel('calc(100% - 32px)', 200);
+        chart.setData({ points: [] }); return;
+      }
+      const all = copySeries();
+      const win = RANGE_MS[S.range] == null ? RANGE_MS.ALL : RANGE_MS[S.range];
+      const now = Date.now();
+      let pts = all.points;
+      if (win !== Infinity) {
+        const cut = now - win;
+        const inside = pts.filter((p) => p[0] >= cut);
+        if (inside.length >= 2) pts = inside;
+        else if (all.equity != null) pts = [[cut, all.equity], [now, all.equity]];
+        else pts = inside;
+      }
+      if (!pts || pts.length < 2) {
+        empty.hidden = false;
+        empty.innerHTML = '<div class="dash"></div><span>Noch keine Copy-Linie</span>';
         chart.setData({ points: [] }); return;
       }
       empty.hidden = true;
-      chart.setData(d);
+      chart.setData({ points: pts, start: all.start, marks: [] });
     }
-    function paintAct() {
-      const box = $('[data-act]', root);
-      if (!S.activity) return;
-      const rows = (S.activity.rows || []).slice(0, 5);
-      box.innerHTML = rows.length ? rows.map((r) => actRow(r)).join('') : '<div class="empty"><div class="dash"></div><b>No trades yet</b></div>';
-    }
-    function paintReplay() {
-      const box = $('[data-replay]', root);
-      const d = S.replay[24];
-      if (d === undefined) { box.innerHTML = `<div class="rcard">${skel('40%', 14)}${skel('92%', 22, 'margin-top:12px')}${skel('70%', 22, 'margin-top:6px')}${skel('100%', 8, 'margin-top:16px')}</div>`; return; }
-      if (!d) { box.innerHTML = ''; return; }
-      box.innerHTML = replayCard(d);
-    }
-    async function loadReplay() {
-      try { S.replay[24] = await api('/api/replay?h=24'); } catch (e) { if (S.replay[24] === undefined) S.replay[24] = null; }
-      paintReplay();
-    }
-    async function loadChart(r) {
-      try { S.chart[r] = await api('/api/chart?range=' + r); net.ok(); if (S.range === r) paintChart(); }
-      catch (e) { net.fail(() => loadChart(r), e); }
-    }
-    $$('.ranges button', root).forEach((b) => b.addEventListener('click', () => { S.range = b.dataset.r; paintChart(); loadChart(S.range); }));
+    $$('.ranges button', root).forEach((b) => b.addEventListener('click', () => { S.range = b.dataset.r; paintChart(); }));
 
     page.load = async function load() {
-      paintHero(false); paintChart(); paintAct(); paintReplay(); paintOrders(); loadReplay();
-      pollSignalOpens();
+      paintHero(false); paintChart(); paintCopy();
       try {
-        const [st, ch, ac, sg] = await Promise.all([
-          api('/api/state'), api('/api/chart?range=' + S.range), api('/api/activity'),
-          api('/api/signals').catch(() => S.signals || { rows: [] }),
-        ]);
-        S.state = st; S.chart[S.range] = ch; S.activity = ac; S.signals = sg;
-        ingestSignalRows(sg && sg.rows);
-        if (sg && sg.rows && sg.rows[0]) S.signalsSeenId = Math.max(S.signalsSeenId || 0, +sg.rows[0].id || 0);
-        net.ok(); paintHero(); paintChart(); paintAct();
+        S.state = await api('/api/state');
+        net.ok(); paintHero(); paintChart(); paintCopy();
       } catch (e) { net.fail(load, e); }
     };
-    page.onState = () => paintHero();
-    page.onEvent = (type, d) => {
-      if (type === 'balance' && d) {
-        paintHero();
-        if (S.range === 'LIVE' && d.balance != null) {
-          const pt = [d.ts || Date.now(), d.balance];
-          const c = S.chart.LIVE; if (c && c.points) { c.points.push(pt); }
-          chart.push(pt);
-        }
+    page.onState = () => { paintRun(); paintCopy(); };
+    page.onEvent = (type) => {
+      if (type === 'copy_book' || type === 'orders' || type === 'desk_signal') {
+        paintHero(); paintChart(); paintCopy();
       }
-      if ((type === 'fill' || type === 'exit') && S.chart.LIVE) { loadChart('LIVE'); }
-      if (type === 'scan' && S.state) {
-        const sc = (S.state.agents || []).find((a) => a.name === 'scanner');
-        if (sc && sc.card) { sc.card.feed = [{ name: d.name, symbol: d.symbol, mint: d.mint, chain: d.chain, verdict: d.verdict === 'pass' ? 'pass' : 'kill', reason: d.reason, liq: d.liquidityUsd }].concat(sc.card.feed || []).slice(0, 6); paintHero(); }
-      }
-      if (type === 'audit_layer' || type === 'verdict' || type === 'signal' || type === 'fill') {
-        if (S.state) {
-          const ag = (n) => (S.state.agents || []).find((a) => a.name === n);
-          if (type === 'audit_layer') { const au = ag('auditor'); if (au && au.card && (!au.card.current || au.card.current.mint !== d.mint)) { au.card.current = { mint: d.mint, name: d.name || (au.card.current && au.card.current.name) || '', layers: [] }; } }
-          if (type === 'verdict') { const an = ag('analyst'); if (an && an.card) an.card.scoring = { mint: d.mint, name: d.name || '', score: d.score, passed: d.passed }; }
-          if (type === 'signal' || type === 'fill') { const ex = ag('executor'); if (ex && ex.card) { Object.assign(ex.card, d.card || {}); if (d.progress != null) ex.card.progress = d.progress; else if (type === 'signal') ex.card.progress = 0; if (d.state) ex.card.state = d.state; else ex.card.state = type === 'fill' ? 'filled' : 'executing'; if (d.name) ex.card.name = d.name; if (d.sizeUsd != null) ex.card.lastSize = d.sizeUsd; if (d.mint) ex.card.mint = d.mint; if (d.chain) ex.card.chain = d.chain; } }
-          paintHero();
-        }
-      }
-      if (type === 'activity') {
-        const box = $('[data-act]', root);
-        if (S.activity) { box.innerHTML = (S.activity.rows || []).slice(0, 5).map((r, i) => actRow(r, i === 0)).join(''); }
-        paintHero();
-      }
-      if (type === 'orders' || type === 'copy_book') { paintOrders(); paintAct(); }
-      if (type === 'desk_signal') paintAct();
     };
     page.destroy = () => chart.destroy();
     return page;
@@ -2389,6 +2499,7 @@ $$('.bigcard', list).forEach((card) => {
       if (!row) return;
       ingestSignalRows([row], true);
       mergeSignalRow(row);
+      ingestTraderAlert(row);
       if (current && current.onEvent) current.onEvent('desk_signal', row);
       else paintTabSignalsBadge();
       if (current && current.onState) current.onState();
