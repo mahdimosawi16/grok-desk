@@ -1314,7 +1314,7 @@ $$('.bigcard', list).forEach((card) => {
       paint();
       try { S.activity = await api('/api/activity'); net.ok(); paint(); } catch (e) { net.fail(load, e); }
     };
-    page.onEvent = (t) => { if (t === 'activity' && S.activity) { const rows = S.activity.rows; $('[data-list]', root).innerHTML = rows.map((r, i) => actRow(r, i === 0)).join(''); } };
+    page.onEvent = (t) => { if ((t === 'activity' || t === 'desk_signal' || t === 'orders') && S.activity) paint(); };
     page.destroy = () => io.disconnect();
     return page;
   };
@@ -1886,7 +1886,7 @@ $$('.bigcard', list).forEach((card) => {
         ${parts.closed.length ? parts.closed.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Noch keine geschlossenen Trades</b></div>'}`;
     }
     page.load = function load() { paint(); pollCopy(); };
-    page.onEvent = (t) => { if (t === 'copy_book') paint(); };
+    page.onEvent = (t) => { if (t === 'copy_book' || t === 'orders') paint(); };
     return page;
   };
 
