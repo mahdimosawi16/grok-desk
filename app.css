@@ -687,6 +687,27 @@ button.cell { width: 100%; text-align: left; }
 
 /* ---------- copy account (PAPER) ---------- */
 .copy-note { padding: 0 calc(var(--g) + var(--sal)) 4px; color: var(--text2); font-size: 13px; }
+.section-h.copy-h { padding-top: 16px; padding-bottom: 8px; }
+.copy-sum {
+  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
+  margin: 0 calc(var(--g) + var(--sal)) 4px; padding: 10px 12px;
+  background: var(--card); border-radius: 12px;
+  font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text2);
+  white-space: nowrap; overflow: hidden;
+}
+.copy-sum b { color: #fff; font-weight: 700; }
+.copy-sum b.up { color: var(--green); }
+.copy-sum b.down { color: var(--red); }
+.copy-sum i { width: 3px; height: 3px; border-radius: 50%; background: var(--text3); flex: none; display: block; }
+.copy-list .row { min-height: 56px; padding: 8px 0; gap: 10px; }
+.copy-list .coin-av, .copy-list .coin-av img, .copy-list .coin-av .mono { width: 36px; height: 36px; font-size: 15px; }
+.copy-list .coin-av .chain { display: none; }
+.copy-list .row .rt b { display: flex; align-items: center; gap: 6px; font-size: 16px; }
+.copy-list .row .rt b .sym { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.copy-list .row .rt span { font-size: 13px; }
+.copy-list .row .rv b { font-size: 16px; }
+.copy-list .row .rv span { font-size: 13px; font-weight: 700; }
+.copy-list .more { border-radius: 0; }
 .pos-card { margin: 0 calc(var(--g) + var(--sal)) 10px; }
 .pos-card .sig-top { align-items: flex-start; }
 .pos-card .rv { text-align: right; flex: none; margin-left: 8px; }

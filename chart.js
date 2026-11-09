@@ -114,7 +114,8 @@
         if (k >= 1) this.slide = null;
       }
       const x0 = series[0][0], x1 = series[series.length - 1][0];
-      const padL = 0, padR = 14, top = 74, bot = 16;
+      const padL = 0, padR = 14, bot = 16;
+      const top = this.marks.length ? 74 : 28;
       let lo = Infinity, hi = -Infinity;
       for (const p of series) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; }
       if (this.start != null) { lo = Math.min(lo, this.start); hi = Math.max(hi, this.start); }
