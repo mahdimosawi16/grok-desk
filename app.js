@@ -457,7 +457,7 @@
   }
 
   /* ================= router ================= */
-  const TABS = ['home', 'agents', 'activity', 'copy', 'account'];
+  const TABS = ['home', 'agents', 'activity', 'account'];
   let current = null;
   const stack = [];
   function parse(hash) {
@@ -475,6 +475,10 @@
     if (stack.length > 1) history.back(); else location.hash = '#/home';
   }
   function route() {
+    const raw = location.hash || '';
+    if (/^#\/?copy(?:\/.*)?$/i.test(raw)) {
+      history.replaceState(null, '', location.pathname + location.search + '#/home');
+    }
     const h = location.hash || '#/home';
     const r = parse(h);
     let anim = 'fade';
@@ -778,6 +782,7 @@
       <div class="chart-sep"></div>
       <div class="section-h copy-h"><h2>Copy-Trades <span class="muted">· PAPER</span></h2></div>
       <div data-copy-sum></div>
+      <div data-copy-open></div>
       <div class="list copy-list" data-copy></div>
     </section>`) };
     const root = page.el;
@@ -875,9 +880,11 @@
           image: p.image,
           handle: p.trader,
           side: open ? 'buy' : 'sell',
+          open,
           reason: open ? '' : closeDe(p.close_reason),
           pnl: p.pnl_usd,
           cost: p.cost_usd,
+          qty: p.qty,
           url: typeof p.fomo_url === 'string' ? p.fomo_url : '',
         });
       });
@@ -921,10 +928,20 @@
       const pnlTxt = pnl == null ? '—' : usd(pnl, { sign: true });
       return `<div class="copy-sum" data-copy-line><span>Cash <b>${esc(cash)}</b></span><i></i><span>Equity <b>${esc(eq)}</b></span><i></i><span>G&amp;V <b class="${cls}">${esc(pnlTxt)}</b></span></div>`;
     }
+    function qtyShort(v) {
+      v = num(v);
+      if (v == null) return '';
+      const a = Math.abs(v);
+      if (a >= 1e6) return (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+      if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'K';
+      return qtyTxt(v);
+    }
     function copyRow(r) {
       const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : 'Coin';
       const buy = r.side === 'buy';
-      const sub = [traderTxt(r.handle), r.reason].filter(Boolean).join(' · ');
+      const sub = r.open
+        ? [traderTxt(r.handle), num(r.cost) != null ? 'Einsatz ' + usd(r.cost) : '', num(r.qty) != null ? 'Menge ' + qtyShort(r.qty) : ''].filter(Boolean).join(' · ')
+        : [traderTxt(r.handle), r.reason].filter(Boolean).join(' · ');
       const pnl = num(r.pnl);
       const pp = copyPnlPct(r.pnl, r.cost);
       const cls = pnl == null || pnl === 0 ? '' : pnl > 0 ? 'up' : 'down';
@@ -932,7 +949,7 @@
       const pctTxt = pp == null ? '' : pct(pp, 1);
       const href = (typeof r.url === 'string' && /^https?:\/\//i.test(r.url)) ? r.url : '';
       const inner = `${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol, image: r.image })}
-        <div class="rt"><b><span class="sym">${esc(sym)}</span><span class="side ${buy ? 'buy' : 'sell'}">${buy ? 'KAUF' : 'VERKAUF'}</span></b><span>${esc(sub)}</span></div>
+        <div class="rt"><b><span class="sym">${esc(sym)}</span><span class="side ${buy ? 'buy' : 'sell'}">${buy ? 'KAUF' : 'VERKAUF'}</span></b><span class="${r.open ? 'wrap' : ''}">${esc(sub)}</span></div>
         <div class="rv"><b class="${cls}">${esc(pnlTxt)}</b>${pctTxt ? `<span class="${cls}">${esc(pctTxt)}</span>` : '<span class="muted">—</span>'}</div>`;
       if (!href) return `<div class="row">${inner}</div>`;
       return `<a class="row" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
@@ -940,30 +957,42 @@
     function paintCopy() {
       const box = $('[data-copy]', root);
       const sum = $('[data-copy-sum]', root);
-      if (!box || !sum) return;
+      const openBox = $('[data-copy-open]', root);
+      if (!box || !sum || !openBox) return;
       const waiting = !DEMO && S.copyPositions === undefined && S.traderAlerts === undefined && !S.signals && !S.copyError;
       if (waiting) {
         const sk = `<div class="copy-sum">${skel('100%', 14, 'margin:0')}</div>` + actSkel(3);
         if (sk === copySig) return;
         copySig = sk;
         sum.innerHTML = `<div class="copy-sum">${skel('100%', 14, 'margin:0')}</div>`;
+        openBox.innerHTML = '';
         box.innerHTML = actSkel(3);
         return;
       }
       const rows = copyFeed();
+      const opens = rows.filter((r) => r.open);
+      const rest = rows.filter((r) => !r.open);
       const preview = 6;
-      const collapsed = !copyMore && rows.length > 8;
-      const shown = collapsed ? rows.slice(0, preview) : rows.slice(0, 48);
+      const collapsed = !copyMore && rest.length > 8;
+      const shown = collapsed ? rest.slice(0, preview) : rest.slice(0, 48);
       const sumHtml = copySummaryHtml();
-      let listHtml = shown.length
-        ? shown.map(copyRow).join('')
-        : '<div class="empty" style="padding:4px 0 12px"><b>Noch keine Copy-Trades</b></div>';
-      if (S.copyError && !shown.length) listHtml = '<div class="empty" style="padding:4px 0 12px"><b>Copy-Daten gerade nicht erreichbar</b></div>';
-      if (rows.length > 8) listHtml += `<button type="button" class="more" data-copy-more>${copyMore ? 'Weniger' : 'Mehr'}</button>`;
-      const sig = sumHtml + '\n' + listHtml;
+      const openHtml = opens.length
+        ? `<div class="copy-kicker">Offen</div><div class="list copy-list">${opens.map(copyRow).join('')}</div>`
+        : '';
+      let listHtml = '';
+      if (shown.length) {
+        listHtml = (opens.length ? '<div class="copy-kicker">Zuletzt</div>' : '') + shown.map(copyRow).join('');
+      } else if (!opens.length) {
+        listHtml = S.copyError
+          ? '<div class="empty" style="padding:4px 0 12px"><b>Copy-Daten gerade nicht erreichbar</b></div>'
+          : '<div class="empty" style="padding:4px 0 12px"><b>Noch keine Copy-Trades</b></div>';
+      }
+      if (rest.length > 8) listHtml += `<button type="button" class="more" data-copy-more>${copyMore ? 'Weniger' : 'Mehr'}</button>`;
+      const sig = sumHtml + '\n' + openHtml + '\n' + listHtml;
       if (sig === copySig) return;
       copySig = sig;
       sum.innerHTML = sumHtml;
+      openBox.innerHTML = openHtml;
       box.innerHTML = listHtml;
       const more = $('[data-copy-more]', box);
       if (more) more.onclick = () => { copyMore = !copyMore; copySig = ''; paintCopy(); };
@@ -1900,7 +1929,7 @@ $$('.bigcard', list).forEach((card) => {
     return page;
   };
 
-  /* ================= COPY-TRADING (PAPER account, separate from the main desk account) ================= */
+  /* ================= copy row helpers (Home) ================= */
   function traderTxt(t) {
     const s = String(t || '').replace(/^@+/, '').trim();
     return s ? '@' + s : '—';
@@ -1915,91 +1944,6 @@ $$('.bigcard', list).forEach((card) => {
     return v.toPrecision(4);
   }
   function moneyOrDash(v) { return num(v) == null ? '—' : usd(v); }
-  function pnlHtml(v) {
-    const n = num(v);
-    if (n == null) return '<b>—</b>';
-    const cls = n > 0 ? 'up' : n < 0 ? 'down' : '';
-    return `<b class="${cls}">${usd(n, { sign: true })}</b>`;
-  }
-  function sortPositions(rows) {
-    const open = [], closed = [];
-    (rows || []).forEach((r) => (r.status === 'open' ? open : closed).push(r));
-    const ts = (r, k) => Date.parse(r[k] || '') || 0;
-    open.sort((a, b) => ts(b, 'opened_at') - ts(a, 'opened_at'));
-    closed.sort((a, b) => (ts(b, 'closed_at') - ts(a, 'closed_at')) || (ts(b, 'opened_at') - ts(a, 'opened_at')));
-    return { open, closed: closed.slice(0, 40) };
-  }
-  function posCard(r) {
-    const open = r.status === 'open';
-    const sym = r.symbol ? '$' + String(r.symbol).replace(/^\$/, '') : (r.mint ? String(r.mint).slice(0, 4) + '…' : 'Position');
-    const when = open ? (r.opened_at ? 'seit ' + ago(r.opened_at) : '') : (r.closed_at ? 'geschlossen ' + ago(r.closed_at) : '');
-    const reason = !open && r.close_reason ? r.close_reason : '';
-    const sub = [traderTxt(r.trader), when, reason].filter(Boolean).join(' · ');
-    const link = (typeof r.fomo_url === 'string' && r.fomo_url) ? `<a class="cta" href="${esc(r.fomo_url)}" target="_blank" rel="noopener noreferrer">Auf FOMO öffnen</a>` : '';
-    return `<article class="sig-card pos-card">
-      <div class="sig-top">${coinAvatar({ mint: r.mint || sym, symbol: r.symbol, name: r.symbol || sym, image: r.image, chain: 'solana' })}
-        <div class="rt"><b>${esc(sym)} <span class="side ${open ? 'buy' : 'sell'}">${open ? 'Offen' : 'Zu'}</span></b><span>${esc(sub)}</span></div>
-        <div class="rv">${pnlHtml(r.pnl_usd)}</div></div>
-      <div class="sig-meta">
-        <span class="pill grey">Einsatz ${esc(moneyOrDash(r.cost_usd))}</span>
-        <span class="pill grey">Menge ${esc(qtyTxt(r.qty))}</span>
-        <span class="pill mono grey">Einstieg ${esc(fmtPrice(num(r.entry_price)))}</span>
-        <span class="pill mono grey">Kurs ${esc(fmtPrice(num(r.current_price)))}</span>
-      </div>${link}</article>`;
-  }
-  PAGES.copy = function () {
-    const page = { el: el(`<section><header class="nav"><div class="nav-center">Copy-Trading</div><div class="grow"></div>
-      <button type="button" class="sound-pill" data-sound aria-pressed="false">Ton aus</button></header>
-      <h1 class="large-title">Copy-Trading</h1>
-      <div class="copy-note">PAPER · Spielgeld. Kein echtes Geld und keine Wallet. Das Hauptkonto bleibt separat.</div>
-      <div class="offline"></div>
-      <div data-c>${actSkel(4)}</div></section>`), name: 'copy' };
-    const root = page.el;
-    const box = $('[data-c]', root);
-    function paint() {
-      if (S.copyPositions === undefined && !S.copyError) { box.innerHTML = actSkel(4); return; }
-      if (S.copyError && !S.copyReady) {
-        box.innerHTML = '<div class="empty"><div class="dash"></div><b>Copy-Konto nicht erreichbar</b>Die Tabelle fehlt oder das Netz ist weg. Es wird nichts abgebrochen.</div>';
-        return;
-      }
-      const a = S.copyAccount || {};
-      const parts = sortPositions(S.copyPositions || []);
-      const upd = a.updated_at ? berlinTime(a.updated_at) : '';
-      const tiles = [
-        ['Stack', moneyOrDash(a.stack_usd)],
-        ['Cash', moneyOrDash(a.cash_usd)],
-        ['Realisiert', null],
-        ['Unrealisiert', null],
-        ['Offen', num(a.open_positions) == null ? String(parts.open.length) : intf(a.open_positions)],
-        ['Trades heute', num(a.trades_today) == null ? '—' : intf(a.trades_today)],
-      ];
-      box.innerHTML = `
-        <div class="hero">
-          <div class="hero-label">Equity <span class="pill orange">PAPER</span> <span class="pill grey">Spielgeld</span></div>
-          <div class="balance small">${S.copyAccount ? esc(moneyOrDash(a.equity_usd)) : '—'}</div>
-          <div class="sub-row">${pnlHtml(a.unrealized_pnl_usd)} <span class="muted">offen</span> ${pnlHtml(a.realized_pnl_usd)} <span class="muted">realisiert</span></div>
-        </div>
-        <div class="tiles">
-          <div class="tile"><span>Stack</span><b>${esc(tiles[0][1])}</b></div>
-          <div class="tile"><span>Cash</span><b>${esc(tiles[1][1])}</b></div>
-          <div class="tile"><span>Modus</span><b>${esc(a.mode || 'PAPER')}</b></div>
-        </div>
-        <div class="tiles">
-          <div class="tile"><span>Realisiert</span>${pnlHtml(a.realized_pnl_usd)}</div>
-          <div class="tile"><span>Unrealisiert</span>${pnlHtml(a.unrealized_pnl_usd)}</div>
-          <div class="tile"><span>Offen</span><b>${esc(tiles[4][1])}</b><small>${esc(tiles[5][0])} ${esc(tiles[5][1])}</small></div>
-        </div>
-        <div class="section-sub">${upd ? 'Aktualisiert ' + esc(upd) + ' · ' : ''}PAPER / Spielgeld</div>
-        <div class="section-h"><h2>Offene Positionen</h2></div>
-        ${parts.open.length ? parts.open.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Keine offenen Positionen</b></div>'}
-        <div class="section-h"><h2>Geschlossen</h2></div>
-        ${parts.closed.length ? parts.closed.map(posCard).join('') : '<div class="empty" style="padding:18px var(--g)"><b>Noch keine geschlossenen Trades</b></div>'}`;
-    }
-    page.load = function load() { paint(); pollCopy(); };
-    page.onEvent = (t) => { if (t === 'copy_book' || t === 'orders') paint(); };
-    return page;
-  };
-
   /* =====================================================================
      DEMO fixture generator (?demo=1). Design work only. Every screen shows
      a grey DEMO pill. Real mode never touches anything below.
@@ -2379,7 +2323,7 @@ $$('.bigcard', list).forEach((card) => {
       // a coin only counts as hot from the scripted buys: random pool buys go to one trader per coin
       const owner = {}; out.forEach((t) => { if (t.side === 'buy' && pool.includes(t.sy)) { owner[t.sy] = owner[t.sy] || t.h; t.h = owner[t.sy]; } });
       return out.map((t, i) => { const c = ccoin(t.sy); return { id: 9000 - i, handle: t.h, ts: new Date(NOW - t.m * 60000).toISOString(), side: t.side, address: c.mint, chain: c.chain, symbol: c.symbol, name: c.name,
-        usd: Math.round((t.side === 'buy' ? 60 + r3() * 840 : 40 + r3() * 1200) * 100) / 100, mcap: c.marketCap * (0.7 + r3() * 0.6), coinUrl: DESKV[t.sy] ? fomoUrl(c) : '#/copy', desk: deskOf(t.sy) }; });
+        usd: Math.round((t.side === 'buy' ? 60 + r3() * 840 : 40 + r3() * 1200) * 100) / 100, mcap: c.marketCap * (0.7 + r3() * 0.6), coinUrl: DESKV[t.sy] ? fomoUrl(c) : '#/home', desk: deskOf(t.sy) }; });
     })();
     function copyObj(state) {
       state = ['no_token', 'no_traders', 'stale'].includes(state) ? state : 'running';
@@ -2390,7 +2334,7 @@ $$('.bigcard', list).forEach((card) => {
       trades.forEach((t) => { if (t.side !== 'buy') return; const b = by[t.address] = by[t.address] || { t, hs: [], usd: 0, last: 0 }; if (!b.hs.includes(t.handle)) b.hs.push(t.handle); b.usd += t.usd; b.last = Math.max(b.last, Date.parse(t.ts)); });
       const hot = Object.values(by).filter((b) => b.hs.length >= 2).sort((a, b) => b.hs.length - a.hs.length || b.last - a.last)
         .map((b) => ({ address: b.t.address, chain: b.t.chain, symbol: b.t.symbol, name: b.t.name, buyers: b.hs.length, handles: b.hs, usd: Math.round(b.usd * 100) / 100, lastTs: new Date(b.last).toISOString(), coinUrl: b.t.coinUrl, desk: b.t.desk }));
-      const traders = TRADERS.map(([h, name]) => { const mine = trades.filter((t) => t.handle === h); return { id: h, handle: h, name, trades24h: mine.length, lastTs: mine.length ? mine[0].ts : null, profileUrl: '#/copy' }; })
+      const traders = TRADERS.map(([h, name]) => { const mine = trades.filter((t) => t.handle === h); return { id: h, handle: h, name, trades24h: mine.length, lastTs: mine.length ? mine[0].ts : null, profileUrl: '#/home' }; })
         .sort((a, b) => b.trades24h - a.trades24h);
       return { state, verified: true, lastPoll: new Date(NOW - (state === 'stale' ? 14 * 60e3 : 50e3)).toISOString(), traders, hot, trades };
     }
